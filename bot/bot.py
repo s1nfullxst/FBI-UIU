@@ -94,7 +94,31 @@ class Records:
             );
             CREATE UNIQUE INDEX IF NOT EXISTS active_credential
                 ON credentials(member_id,kind,title_key) WHERE active=1;
+            CREATE TABLE IF NOT EXISTS announcements(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+                body TEXT NOT NULL, published_by TEXT NOT NULL, published_at TEXT NOT NULL
+            );
         """)
+
+    def publish_announcement(self, title, body, actor):
+        title, body = title.strip(), body.strip()
+        if not 1 <= len(title) <= 100 or not 1 <= len(body) <= 1200:
+            raise ValueError('Use a title of 1-100 characters and a message of 1-1200 characters.')
+        with self.db:
+            existing = self.db.execute('SELECT id FROM announcements WHERE title=? AND body=?', (title,body)).fetchone()
+            if existing:
+                return existing['id']
+            cur = self.db.execute('INSERT INTO announcements(title,body,published_by,published_at) VALUES(?,?,?,?)',
+                                  (title,body,str(actor),now()))
+            self.audit(actor,'announcement.publish',str(cur.lastrowid))
+            return cur.lastrowid
+
+    def remove_announcement(self, announcement_id, actor):
+        with self.db:
+            cur = self.db.execute('DELETE FROM announcements WHERE id=?', (announcement_id,))
+            if not cur.rowcount:
+                raise ValueError('That announcement does not exist. Use /announcement list for IDs.')
+            self.audit(actor,'announcement.remove',str(announcement_id))
 
     def set_dossier(self, member_id, department, callsign, actor):
         department, callsign = department.strip(), callsign.strip()
@@ -149,6 +173,7 @@ class Records:
             self.db.execute('UPDATE credentials SET awarded_by=? WHERE awarded_by=?', (removed,uid))
             self.db.execute('UPDATE credentials SET revoked_by=? WHERE revoked_by=?', (removed,uid))
             self.db.execute('DELETE FROM case_notes WHERE author=?', (uid,))
+            self.db.execute('DELETE FROM announcements WHERE published_by=?', (uid,))
             self.db.execute("UPDATE cases SET created_by=?,title=?,description=?,resolution=? WHERE created_by=?", (removed, 'Removed case content', removed, removed, uid))
             self.db.execute("UPDATE operations SET created_by=?,title=?,briefing=? WHERE created_by=?", (removed, 'Removed operation content', removed, uid))
             self.db.execute('UPDATE attendance SET confirmed_by=? WHERE confirmed_by=?', (removed, uid))
@@ -165,6 +190,7 @@ class Records:
                 ('operations', ('title','briefing')),
                 ('case_notes', ('body','evidence_url')),
                 ('credentials', ('title','title_key','reason','revoke_reason')),
+                ('announcements', ('title','body')),
             ):
                 for row in self.db.execute(f"SELECT id,{','.join(columns)} FROM {table}").fetchall():
                     for column in columns:
@@ -505,7 +531,9 @@ class UIUBot(discord.Client):
                 "members_updated_at": self.member_updated_at,
                 "open_cases": counts["open"], "closed_cases": counts["closed"],
                 "generated_at": now(), "bot_online": self.is_ready(),
-                "activity": self.public_activity()}
+                  "activity": self.public_activity(),
+                  "announcements": [dict(r) for r in self.records.db.execute(
+                      'SELECT id,title,body,published_at FROM announcements ORDER BY id DESC LIMIT 5')]}
 
     async def stats_route(self, request):
         # Public schedule and aggregate counts only; no briefings, case text, member identities or credentials.
@@ -550,6 +578,30 @@ async def staff_check(interaction):
 
 
 def install_commands(bot):
+    announcements = app_commands.Group(name='announcement', description='Staff: publish updates to the public website', guild_only=True)
+
+    @announcements.command(name='publish', description='Publish a title and message publicly on the website')
+    @app_commands.describe(title='Public headline; do not include private information', message='Public text visible to everyone on the website')
+    @app_commands.check(staff_check)
+    async def announcement_publish(interaction: discord.Interaction, title: app_commands.Range[str,1,100],
+                                   message: app_commands.Range[str,1,1200]):
+        announcement_id = bot.records.publish_announcement(title,message,interaction.user.id)
+        await interaction.response.send_message(f'Announcement #{announcement_id} published to the public website. It appears on the next refresh (about one minute). Use `/announcement remove` to remove it.', ephemeral=True)
+
+    @announcements.command(name='remove', description='Remove a website announcement by its ID')
+    @app_commands.check(staff_check)
+    async def announcement_remove(interaction: discord.Interaction, announcement_id: app_commands.Range[int,1]):
+        bot.records.remove_announcement(announcement_id,interaction.user.id)
+        await interaction.response.send_message('Announcement removed from the feed. Open website tabs update on their next successful refresh; copies already made by others cannot be recalled.', ephemeral=True)
+
+    @announcements.command(name='list', description='List announcement IDs, newest first')
+    @app_commands.check(staff_check)
+    async def announcement_list(interaction: discord.Interaction, page: app_commands.Range[int,1,100000] = 1):
+        rows = bot.records.db.execute('SELECT id,title FROM announcements ORDER BY id DESC LIMIT 10 OFFSET ?', ((page-1)*10,)).fetchall()
+        text = '\n'.join(f"#{r['id']} | {discord.utils.escape_markdown(r['title'])}" for r in rows)
+        await interaction.response.send_message(text or 'No announcements on this page.',ephemeral=True)
+
+    bot.tree.add_command(announcements)
     privacy = app_commands.Group(name='privacy', description='Privacy policy and data deletion requests', guild_only=True)
 
     @privacy.command(name='policy', description='Read the privacy policy and terms')
@@ -952,6 +1004,7 @@ def install_commands(bot):
             "`/dossier view` / `set` - agent dossier\n"
             "`/training award` / `revoke` / `list` - qualifications\n"
             "`/commendation award` / `revoke` / `list` - medals and recognition\n\n"
+            "`/announcement publish` / `list` / `remove` - public website updates\n\n"
             "Cases and operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
             "Promotion and operation announcements go to the configured channels; case details stay private.", ephemeral=True)
 
