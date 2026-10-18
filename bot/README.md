@@ -90,3 +90,9 @@ Cases and promotion audit history are stored in `data/uiu.sqlite3`. They survive
 
 Hosting reference: https://bot-hosting.net/docs/guides/set-up-a-deployment
 Discord library reference: https://discordpy.readthedocs.io/en/stable/
+
+## Website operations dashboard
+The public /stats response now includes up to 12 future scheduled operations (ID, title, game and start time), the total completed operations, and confirmed participations in completed operations. Titles and schedules are public; briefings, member IDs, staff notes and evidence remain private. The website polls every minute and displays times in the visitor's timezone. Cancelled and past-start sessions are excluded from the upcoming list.
+
+To enable this on the running host, replace bot.py with the updated version and restart. Keep data/uiu.sqlite3 and environment variables. No new dependencies or settings are needed.
+
