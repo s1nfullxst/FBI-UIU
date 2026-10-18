@@ -9,6 +9,50 @@
   }
   footer.append(links);
 })();
+/* Public announcements and member guide. */
+(() => {
+  const about = document.getElementById('about');
+  if (!about) return;
+  const style = document.createElement('style');
+  style.textContent = `header nav{flex-wrap:wrap;row-gap:12px;min-width:0}.news-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.news-card{padding:26px;border:1px solid var(--line);background:var(--panel);min-width:0}.news-card:first-child{border-top:3px solid var(--gold)}.news-card h3{font:28px Georgia,serif;overflow-wrap:anywhere}.news-card p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.news-card time{font:11px monospace;color:var(--gold)}.member-steps{list-style:none;counter-reset:steps;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.member-steps li{counter-increment:steps;padding:24px;border-top:1px solid var(--line)}.member-steps li:before{content:'0' counter(steps);font:13px monospace;color:var(--gold)}.member-steps h3{font:26px Georgia,serif}.member-steps p{font-size:14px}.guide-links{display:flex;gap:20px;flex-wrap:wrap;font-size:13px}.news-state{font-size:13px;color:var(--muted)}@media(max-width:650px){.news-grid,.member-steps{grid-template-columns:1fr}}`;
+  document.head.append(style);
+  const news = document.createElement('section'); news.id = 'announcements'; news.setAttribute('aria-labelledby','news-title');
+  news.innerHTML = `<div class="section-head"><div><span class="mono">UIU / COMMUNITY UPDATES</span><h2 id="news-title">Latest announcements.</h2></div><p>Updates published by community staff. Check Discord for conversations and full session briefings.</p></div><p id="news-state" class="news-state" role="status">Checking for announcements…</p><div id="news-list" class="news-grid"></div>`;
+  about.before(news);
+  const guide = document.createElement('section'); guide.id = 'member-guide'; guide.setAttribute('aria-labelledby','guide-title');
+  guide.innerHTML = `<div class="section-head"><div><span class="mono">NEW TO THE UIU?</span><h2 id="guide-title">Your first steps.</h2></div><p>From joining the server to your first operation: start here, then follow the community’s current instructions in Discord.</p></div>
+    <ol class="member-steps"><li><h3>Meet the community.</h3><p>Join our Discord, read the rules and follow any verification instructions shown there. Ask staff if you need help getting access.</p><a href="https://discord.gg/qmdEWAhBUy" class="button" target="_blank" rel="noopener noreferrer">JOIN DISCORD &rarr;</a></li>
+    <li><h3>Find your department.</h3><p>Explore the teams and their duties. Contact the relevant department lead in Discord about openings and requirements; a listing does not mean recruitment is open.</p><a href="#departments">EXPLORE DEPARTMENTS &rarr;</a></li>
+    <li><h3>Prepare your agent.</h3><p>Use <code>/dossier view</code> to check your profile. Staff can set your department and callsign, then record qualifications as you complete training.</p><p>Need a correction? Ask staff rather than creating a second record.</p></li>
+    <li><h3>Join your first operation.</h3><p>Check the Ops Board for upcoming sessions. Read the briefing in Discord and use the bot’s Join button before the scheduled start. Staff confirm attendance afterward.</p><a href="#operations">VIEW OPS BOARD &rarr;</a></li></ol>
+    <div class="contact-note"><h3>Keep it fictional. Keep it respectful.</h3><p>Use fictional details in case reports, follow server rules, and agree roleplay boundaries with others. Questions about participation go to staff in Discord.</p><div class="guide-links"><a href="#questions">Read the FAQ</a><a href="./privacy.html">Your privacy</a><a href="./terms.html">Terms of Service</a></div></div>`;
+  const questions = document.getElementById('questions');
+  if (questions) questions.before(guide); else about.after(guide);
+  const nav = document.querySelector('header nav');
+  if (nav) for (const [label,href] of [['Updates','#announcements'],['Start here','#member-guide']]) {
+    const link = document.createElement('a');link.textContent=label;link.href=href;nav.append(link);
+  }
+  const state = document.getElementById('news-state'), list = document.getElementById('news-list');
+  let lastUpdate = null;
+  document.addEventListener('uiu-stats', event => {
+    const rows = event.detail.announcements;
+    if (!Array.isArray(rows) || rows.length > 5 || !rows.every(row => row && Number.isSafeInteger(row.id) && row.id > 0 && typeof row.title === 'string' && row.title.length <= 100 && typeof row.body === 'string' && row.body.length <= 1200 && Number.isFinite(Date.parse(row.published_at)))) {
+      list.replaceChildren();lastUpdate=null;state.textContent='Announcements are not available here yet. Check Discord for updates.';return;
+    }
+    list.replaceChildren();
+    for (const row of rows) {
+      const card=document.createElement('article');card.className='news-card';
+      const date=document.createElement('time');date.dateTime=row.published_at;date.textContent=new Date(row.published_at).toLocaleDateString(undefined,{dateStyle:'medium'});
+      const title=document.createElement('h3');title.textContent=row.title;
+      const body=document.createElement('p');body.textContent=row.body;
+      card.append(date,title,body);list.append(card);
+    }
+    lastUpdate=new Date();state.textContent=rows.length ? 'Latest '+rows.length+' update'+(rows.length===1?'':'s')+' · Synced '+lastUpdate.toLocaleTimeString() : 'No announcements published yet. Check Discord for community updates.';
+  });
+  document.addEventListener('uiu-unavailable',()=>{
+    state.textContent=lastUpdate ? 'Connection unavailable. Showing announcements last checked at '+lastUpdate.toLocaleTimeString()+'. They may have changed.' : 'Announcements unavailable. Check Discord for updates.';
+  });
+})();
 /* Public website enhancements. No private case or member records are requested. */
 (() => {
   'use strict';
