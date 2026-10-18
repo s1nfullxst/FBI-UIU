@@ -80,7 +80,56 @@ class Records:
             CREATE TABLE IF NOT EXISTS privacy_requests(
                 member_id TEXT PRIMARY KEY, requested_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dossiers(
+                member_id TEXT PRIMARY KEY, department TEXT NOT NULL, callsign TEXT NOT NULL,
+                updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS credentials(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, member_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('training','commendation')),
+                title TEXT NOT NULL, title_key TEXT NOT NULL, reason TEXT NOT NULL,
+                awarded_by TEXT NOT NULL, awarded_at TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1, revoked_by TEXT, revoked_at TEXT,
+                revoke_reason TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS active_credential
+                ON credentials(member_id,kind,title_key) WHERE active=1;
         """)
+
+    def set_dossier(self, member_id, department, callsign, actor):
+        department, callsign = department.strip(), callsign.strip()
+        if not 1 <= len(department) <= 80 or not 1 <= len(callsign) <= 30:
+            raise ValueError('Use a department of 1-80 characters and a callsign of 1-30 characters.')
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO dossiers VALUES(?,?,?,?,?)',
+                            (str(member_id), department, callsign, str(actor), now()))
+            self.audit(actor, 'dossier.set', json.dumps({'member': member_id}))
+
+    def award_credential(self, member_id, kind, title, reason, actor):
+        title, reason = title.strip(), reason.strip()
+        if kind not in ('training', 'commendation') or not 1 <= len(title) <= 80 or not 1 <= len(reason) <= 400:
+            raise ValueError('Use a title of 1-80 characters and a reason of 1-400 characters.')
+        key = ' '.join(title.casefold().split())
+        try:
+            with self.db:
+                cur = self.db.execute('INSERT INTO credentials(member_id,kind,title,title_key,reason,awarded_by,awarded_at) VALUES(?,?,?,?,?,?,?)',
+                    (str(member_id), kind, title, key, reason, str(actor), now()))
+                self.audit(actor, kind + '.award', json.dumps({'member': member_id, 'record': cur.lastrowid}))
+                return cur.lastrowid
+        except sqlite3.IntegrityError:
+            raise ValueError('That member already has an active record with this title. Revoke it first if it needs replacing.')
+
+    def revoke_credential(self, record_id, kind, reason, actor):
+        reason = reason.strip()
+        if not 1 <= len(reason) <= 400:
+            raise ValueError('Enter a reason of 1-400 characters.')
+        with self.db:
+            row = self.db.execute('SELECT * FROM credentials WHERE id=? AND kind=?', (record_id,kind)).fetchone()
+            if row is None or not row['active']:
+                raise ValueError('Choose an active record ID from the matching list command.')
+            self.db.execute('UPDATE credentials SET active=0,revoked_by=?,revoked_at=?,revoke_reason=? WHERE id=?',
+                            (str(actor),now(),reason,record_id))
+            self.audit(actor, kind + '.revoke', json.dumps({'member': row['member_id'], 'record': record_id}))
 
     def request_deletion(self, member_id):
         with self.db:
@@ -94,13 +143,19 @@ class Records:
         pattern = re.compile(r'(?<![0-9])' + re.escape(uid) + r'(?![0-9])')
         removed = '[removed]'
         with self.db:
-            for table in ('assignments', 'signups', 'attendance', 'privacy_requests'):
+            for table in ('assignments', 'signups', 'attendance', 'privacy_requests', 'dossiers', 'credentials'):
                 self.db.execute(f'DELETE FROM {table} WHERE member_id=?', (uid,))
+            self.db.execute('UPDATE dossiers SET updated_by=? WHERE updated_by=?', (removed,uid))
+            self.db.execute('UPDATE credentials SET awarded_by=? WHERE awarded_by=?', (removed,uid))
+            self.db.execute('UPDATE credentials SET revoked_by=? WHERE revoked_by=?', (removed,uid))
             self.db.execute('DELETE FROM case_notes WHERE author=?', (uid,))
             self.db.execute("UPDATE cases SET created_by=?,title=?,description=?,resolution=? WHERE created_by=?", (removed, 'Removed case content', removed, removed, uid))
             self.db.execute("UPDATE operations SET created_by=?,title=?,briefing=? WHERE created_by=?", (removed, 'Removed operation content', removed, uid))
             self.db.execute('UPDATE attendance SET confirmed_by=? WHERE confirmed_by=?', (removed, uid))
             self.db.execute('DELETE FROM audit WHERE actor=?', (uid,))
+            for row in self.db.execute('SELECT id,title_key FROM credentials').fetchall():
+                if pattern.search(row['title_key']):
+                    self.db.execute('DELETE FROM credentials WHERE id=?', (row['id'],))
             # Erase whole related audit entries, preserving valid JSON in the others.
             for row in self.db.execute('SELECT id,detail FROM audit').fetchall():
                 if pattern.search(row['detail']):
@@ -109,12 +164,18 @@ class Records:
                 ('cases', ('title','description','resolution')),
                 ('operations', ('title','briefing')),
                 ('case_notes', ('body','evidence_url')),
+                ('credentials', ('title','title_key','reason','revoke_reason')),
             ):
                 for row in self.db.execute(f"SELECT id,{','.join(columns)} FROM {table}").fetchall():
                     for column in columns:
-                        if pattern.search(row[column]):
+                        if row[column] and pattern.search(row[column]):
                             value = '' if column == 'evidence_url' else pattern.sub(removed, row[column])
                             self.db.execute(f'UPDATE {table} SET {column}=? WHERE id=?', (value,row['id']))
+            for row in self.db.execute('SELECT * FROM dossiers').fetchall():
+                for column in ('department','callsign'):
+                    if pattern.search(row[column]):
+                        self.db.execute(f'UPDATE dossiers SET {column}=? WHERE member_id=?',
+                                        (pattern.sub(removed,row[column]),row['member_id']))
         # Rebuild the current SQLite file, removing free-page remnants. This cannot erase provider snapshots.
         self.db.execute('VACUUM')
 
@@ -617,13 +678,81 @@ def install_commands(bot):
             await staff_check(interaction)
         data = bot.records.profile(target.id)
         embed = discord.Embed(title=f'Agent profile | {target.display_name}', color=GOLD)
+        dossier = bot.records.db.execute('SELECT * FROM dossiers WHERE member_id=?', (str(target.id),)).fetchone()
+        role = getattr(target, 'top_role', None)
+        embed.add_field(name='Highest Discord role', value=discord.utils.escape_markdown(role.name) if role else 'Unavailable')
+        embed.add_field(name='Department', value=discord.utils.escape_markdown(dossier['department']) if dossier else 'Not set')
+        embed.add_field(name='Callsign', value=discord.utils.escape_markdown(dossier['callsign']) if dossier else 'Not set')
         embed.add_field(name='Assigned open cases', value=str(data['open']))
         embed.add_field(name='Assigned closed cases', value=str(data['closed']))
         embed.add_field(name='Scheduled operation sign-ups', value=str(data['scheduled_operations']))
         embed.add_field(name='Completed operation sign-ups', value=str(data['completed_operations']))
         embed.add_field(name='Verified completed operations', value=str(data['verified_completed']))
+        for kind, label in (('training','Qualifications'), ('commendation','Commendations')):
+            total = bot.records.db.execute('SELECT COUNT(*) FROM credentials WHERE member_id=? AND kind=? AND active=1', (str(target.id),kind)).fetchone()[0]
+            rows = bot.records.db.execute('SELECT title FROM credentials WHERE member_id=? AND kind=? AND active=1 ORDER BY id DESC LIMIT 3', (str(target.id),kind)).fetchall()
+            value = '\n'.join(discord.utils.escape_markdown(r['title']) for r in rows) or 'None recorded'
+            embed.add_field(name=f'{label} ({total})', value=value, inline=False)
         embed.set_footer(text='Verified attendance is confirmed by staff. Case counts reflect current assignments.')
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    dossier_group = app_commands.Group(name='dossier', description='Agent department, callsign and service record', guild_only=True)
+    dossier_group.command(name='view', description='View your own dossier; staff can view another member')(profile.callback)
+
+    @dossier_group.command(name='set', description='Staff: set an agent department and callsign')
+    @app_commands.check(staff_check)
+    async def dossier_set(interaction: discord.Interaction, member: discord.Member,
+                          department: app_commands.Range[str,1,80], callsign: app_commands.Range[str,1,30]):
+        if member.bot:
+            raise ValueError('Choose a human agent.')
+        bot.records.set_dossier(member.id, department, callsign, interaction.user.id)
+        await interaction.response.send_message('Dossier saved. Discord roles are unchanged.', ephemeral=True)
+
+    bot.tree.add_command(dossier_group)
+
+    def install_credentials(kind, label):
+        group = app_commands.Group(name=kind, description=label + ' records', guild_only=True)
+
+        @group.command(name='award', description='Staff: award a qualification or commendation')
+        @app_commands.check(staff_check)
+        async def award(interaction: discord.Interaction, member: discord.Member,
+                        title: app_commands.Range[str,1,80], reason: app_commands.Range[str,1,400]):
+            if member.bot or member.id == interaction.user.id:
+                raise ValueError('Choose another human member. A different staff member must award your records.')
+            record_id = bot.records.award_credential(member.id, kind, title, reason, interaction.user.id)
+            await interaction.response.send_message(f'{label} saved as record #{record_id}. View it with `/{kind} list`.', ephemeral=True)
+
+        @group.command(name='revoke', description='Staff: revoke an active record with a reason')
+        @app_commands.check(staff_check)
+        async def revoke(interaction: discord.Interaction, record_id: app_commands.Range[int,1],
+                         reason: app_commands.Range[str,1,400]):
+            bot.records.revoke_credential(record_id, kind, reason, interaction.user.id)
+            await interaction.response.send_message('Record revoked. It remains in the history but no longer counts on the dossier.', ephemeral=True)
+
+        @group.command(name='list', description='View your records; staff can view another member')
+        async def list_records(interaction: discord.Interaction, member: discord.Member | None = None,
+                               page: app_commands.Range[int,1,100000] = 1):
+            target = member or interaction.user
+            if target.id != interaction.user.id:
+                await staff_check(interaction)
+            rows = bot.records.db.execute('SELECT * FROM credentials WHERE member_id=? AND kind=? ORDER BY id DESC LIMIT 4 OFFSET ?',
+                                          (str(target.id),kind,(page-1)*4)).fetchall()
+            embed = discord.Embed(title=f'{label} | {target.display_name}', color=GOLD)
+            for row in rows:
+                status = 'ACTIVE' if row['active'] else 'REVOKED'
+                value = discord.utils.escape_markdown(row['reason']) + '\nAwarded: ' + row['awarded_at'][:10]
+                if not row['active']:
+                    value += '\nRevoked: ' + row['revoked_at'][:10] + '\n' + discord.utils.escape_markdown(row['revoke_reason'] or '')
+                embed.add_field(name=f"#{row['id']} | {row['title']} | {status}", value=value[:1024], inline=False)
+            if not rows:
+                embed.description = 'No records on this page.'
+            embed.set_footer(text=f'Page {page} · 4 records per page · Private service record')
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        bot.tree.add_command(group)
+
+    install_credentials('training', 'Training qualifications')
+    install_credentials('commendation', 'Commendations')
 
     @cases.command(name='assign', description='Assign a lead agent to an open case')
     @app_commands.check(staff_check)
@@ -820,6 +949,9 @@ def install_commands(bot):
             "`/backup` — private database download (Manage Server required)\n\n"
             "`/privacy policy` / `request` - policies and deletion requests\n"
             "`/privacy requests` / `erase` - administrator privacy handling\n\n"
+            "`/dossier view` / `set` - agent dossier\n"
+            "`/training award` / `revoke` / `list` - qualifications\n"
+            "`/commendation award` / `revoke` / `list` - medals and recognition\n\n"
             "Cases and operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
             "Promotion and operation announcements go to the configured channels; case details stay private.", ephemeral=True)
 
