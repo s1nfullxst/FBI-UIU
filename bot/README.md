@@ -96,3 +96,28 @@ The public /stats response now includes up to 12 future scheduled operations (ID
 
 To enable this on the running host, replace bot.py with the updated version and restart. Keep data/uiu.sqlite3 and environment variables. No new dependencies or settings are needed.
 
+
+## Privacy requests (18 October 2026 update)
+
+Replace bot.py and restart; no new dependencies or environment variables. Existing data is preserved on startup. No deletion is performed by installing this update.
+
+- `/privacy policy`: private links to terms/privacy and contact instructions.
+- `/privacy request`: saves the caller's deletion request once, surviving restart. Members should also contact the operator privately. This queues a request; it does not erase data or send staff notifications.
+- `/privacy requests [page]`: Manage Server only; ten pending requests per page.
+- `/privacy erase user_id confirmation`: Manage Server only. Verify the requester first. Enter the numeric Discord user ID (works for departed members), with confirmation `DELETE <same ID>`. This permanently removes sign-ups, attendance, assignments, authored notes, authors' case/operation text, identifying audit entries and exact ID references from the active database. Case/operation IDs and statuses remain; other users' unrelated data is retained. SQLite secure_delete and VACUUM reduce deleted remnants in the active database file. They cannot erase host snapshots.
+
+Operator procedure:
+1. Check `/privacy requests` regularly, verify account ownership privately, and discuss scope. Do not request passwords, tokens or identity documents.
+2. Review names/aliases in other people's free text and the public website separately. The command matches exact IDs, not names. Export/access requests need a manual review to avoid disclosing other users' records.
+3. Execute `/privacy erase` only for the verified request. It also removes the queue entry. Complete the remaining review before telling the requester deletion is complete.
+4. Remove/restrict relevant Discord announcements, attachments and downloaded database exports. Ask hosting support how to remove or expire snapshots containing the erased data. The bot cannot control provider backups or other people's downloads.
+5. Do not restore a pre-deletion backup into service unchanged. Reapply the verified deletion and manual redactions before restarting it. Keep any necessary temporary tracking of unfinished external-copy work private and remove it when finished.
+6. For access/correction/export requests or users who cannot access the server, use the private operator contact route in the policy.
+
+### Encryption status: not verification-ready on this evidence alone
+
+Bot-Hosting's official backup article confirms encrypted off-server backups: https://bot-hosting.net/blog/how-safe-is-your-data-with-bot-hosting . It does not confirm encryption of the live volume. The bot's SQLite database and /backup exports are not encrypted by this code.
+
+Ask hosting support: "Does the live filesystem/volume storing my deployment's data/uiu.sqlite3 use encryption at rest, including temporary storage and snapshots? I need confirmation for Discord Developer Terms section 5(c), not just HTTPS or off-server backup encryption. What encryption/key management applies, and how can I remove personal data from retained backups?"
+
+Until this is answered, do not claim full encryption-at-rest compliance. Protect or encrypt downloaded exports separately. Published policy URLs and these commands do not themselves constitute Discord verification or legal certification.
