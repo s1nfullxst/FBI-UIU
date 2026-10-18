@@ -78,7 +78,7 @@ class BotTests(unittest.TestCase):
         bot = UIUBot(123, self.records)
         install_commands(bot)
         commands = {cmd.name: cmd for cmd in bot.tree.get_commands()}
-        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile'})
+        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile', 'backup'})
         self.assertEqual({c.name for c in commands['case'].commands}, {'open', 'close', 'reopen', 'view', 'list', 'assign', 'unassign', 'note', 'notes'})
         for cmd in commands.values():
             cmd.to_dict(bot.tree)  # Validate Discord command schemas, including option types.
@@ -223,6 +223,57 @@ class BotTests(unittest.TestCase):
             with self.assertRaises(app_commands.CheckFailure):
                 await bot.tree.get_command('profile').callback(interaction, SimpleNamespace(id=20))
         asyncio.run(run())
+
+    def test_attendance_credit_and_corrections(self):
+        op = self.records.schedule('Patrol', 'Briefing', 'ERLC', '2099-10-20T19:00Z', 1)
+        with self.assertRaises(ValueError):
+            self.records.mark_attendance(op, 10, True, 1)
+        with self.records.db:
+            self.records.db.execute("UPDATE operations SET starts_at='2000-01-01T12:00:00+00:00' WHERE id=?", (op,))
+        self.records.mark_attendance(op, 10, True, 1)
+        self.assertEqual(self.records.profile(10)['verified_completed'], 0)
+        self.records.operation_status(op, 'completed', 1)
+        self.assertEqual(self.records.profile(10)['verified_completed'], 1)
+        self.records.mark_attendance(op, 10, True, 1)
+        self.assertEqual(self.records.profile(10)['verified_completed'], 1)
+        self.records.mark_attendance(op, 10, False, 1)
+        self.assertEqual(self.records.profile(10)['verified_completed'], 0)
+
+    def test_backup_restores_all_records(self):
+        import sqlite3
+        case_id = self.records.create('Backup case', 'Notes', 1)
+        self.records.add_note(case_id, 1, 'Preserve this')
+        self.records.assign(case_id, 10, 1)
+        op = self.records.schedule('Patrol', 'Briefing', 'ERLC', '2099-10-20T19:00Z', 1)
+        self.records.signup(op, 10, True)
+        data = self.records.backup_bytes()
+        restored = sqlite3.connect(':memory:')
+        try:
+            restored.deserialize(data)
+            self.assertEqual(restored.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+            self.assertEqual(restored.execute('SELECT body FROM case_notes').fetchone()[0], 'Preserve this')
+            self.assertEqual(restored.execute('SELECT COUNT(*) FROM signups').fetchone()[0], 1)
+        finally:
+            restored.close()
+
+    def test_backup_permission_guard(self):
+        from unittest.mock import AsyncMock
+        bot = UIUBot(123, self.records)
+        install_commands(bot)
+        interaction = SimpleNamespace(permissions=SimpleNamespace(manage_guild=False))
+        check = bot.tree.get_command('backup').checks[1]
+        # Inspect actual permission predicate independently of the cooldown.
+        denied = False
+        for predicate in bot.tree.get_command('backup').checks:
+            if predicate.__name__ == 'predicate':
+                try:
+                    result = predicate(interaction)
+                except app_commands.MissingPermissions:
+                    denied = True
+                    break
+                if asyncio.iscoroutine(result):
+                    result.close()
+        self.assertTrue(denied)
 
 
 if __name__ == '__main__':
