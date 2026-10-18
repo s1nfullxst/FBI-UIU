@@ -90,6 +90,27 @@ class BotTests(unittest.TestCase):
         response = asyncio.run(bot.stats_route(None))
         self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'https://s1nfullxst.github.io')
 
+    def test_public_activity_filters_and_privacy(self):
+        future = self.records.schedule('Public patrol', 'PRIVATE BRIEFING', 'ERLC', '2099-10-20T19:00Z', 987654)
+        cancelled = self.records.schedule('Cancelled', 'Hidden briefing', 'BRM5', '2099-10-21T19:00Z', 987654)
+        self.records.operation_status(cancelled, 'cancelled', 1)
+        completed = self.records.schedule('Completed', 'Hidden briefing', 'Both', '2099-10-22T19:00Z', 987654)
+        with self.records.db:
+            self.records.db.execute("UPDATE operations SET starts_at='2020-01-01T00:00:00+00:00' WHERE id=?", (completed,))
+        self.records.mark_attendance(completed, 123456, True, 987654)
+        self.records.mark_attendance(completed, 654321, False, 987654)
+        self.records.operation_status(completed, 'completed', 1)
+        result = UIUBot(123, self.records).public_activity()
+        self.assertEqual(result['completed_operations'], 1)
+        self.assertEqual(result['verified_attendances'], 1)
+        self.assertEqual([r['id'] for r in result['upcoming_operations']], [future])
+        self.assertEqual(set(result['upcoming_operations'][0]), {'id','title','game','starts_at'})
+        for private in ('PRIVATE BRIEFING', '987654', '123456', '654321', 'Cancelled'):
+            self.assertNotIn(private, str(result))
+        for i in range(15):
+            self.records.schedule('Additional', 'Private', 'ERLC', '2099-11-20T19:00Z', 1)
+        self.assertEqual(len(UIUBot(123, self.records).public_activity()['upcoming_operations']), 12)
+
     def test_staff_permission_denial(self):
         async def fetch_member(user_id):
             return SimpleNamespace(guild_permissions=SimpleNamespace(manage_guild=False), roles=[])
