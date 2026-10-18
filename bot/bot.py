@@ -388,15 +388,25 @@ class UIUBot(discord.Client):
     async def before_members(self):
         await self.wait_until_ready()
 
+    def public_activity(self):
+        db = self.records.db
+        upcoming = [dict(row) for row in db.execute(
+            "SELECT id,title,game,starts_at FROM operations WHERE status='scheduled' AND julianday(starts_at)>=julianday(?) ORDER BY julianday(starts_at),id LIMIT 12", (now(),))]
+        completed = db.execute("SELECT COUNT(*) FROM operations WHERE status='completed'").fetchone()[0]
+        attendance = db.execute("SELECT COUNT(*) FROM attendance a JOIN operations o ON o.id=a.operation_id WHERE a.present=1 AND o.status='completed'").fetchone()[0]
+        return {"upcoming_operations": upcoming, "completed_operations": completed,
+                "verified_attendances": attendance}
+
     def stats(self):
         counts = self.records.counts()
         return {"members": self.member_count, "members_approximate": True,
                 "members_updated_at": self.member_updated_at,
                 "open_cases": counts["open"], "closed_cases": counts["closed"],
-                "generated_at": now(), "bot_online": self.is_ready()}
+                "generated_at": now(), "bot_online": self.is_ready(),
+                "activity": self.public_activity()}
 
     async def stats_route(self, request):
-        # Only aggregate counts are public. No names, case text, IDs or credentials.
+        # Public schedule and aggregate counts only; no briefings, case text, member identities or credentials.
         return web.json_response(self.stats(), headers={
             "Access-Control-Allow-Origin": "https://s1nfullxst.github.io",
             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
