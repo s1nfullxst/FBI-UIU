@@ -78,7 +78,7 @@ class BotTests(unittest.TestCase):
         bot = UIUBot(123, self.records)
         install_commands(bot)
         commands = {cmd.name: cmd for cmd in bot.tree.get_commands()}
-        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile', 'backup', 'privacy'})
+        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile', 'backup', 'privacy', 'dossier', 'training', 'commendation'})
         self.assertEqual({c.name for c in commands['case'].commands}, {'open', 'close', 'reopen', 'view', 'list', 'assign', 'unassign', 'note', 'notes'})
         for cmd in commands.values():
             cmd.to_dict(bot.tree)  # Validate Discord command schemas, including option types.
@@ -154,6 +154,57 @@ class BotTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.records.erase_user('not an ID')
         self.assertEqual(len(group.get_command('request').checks), 0)
+
+    def test_service_records_persist_revoke_and_erase(self):
+        uid, other = 123456789012345678, 223456789012345678
+        self.records.set_dossier(uid, 'Tactical Pilots', 'GOI-25', other)
+        cert = self.records.award_credential(uid, 'training', ' Pilot ', 'Completed flight assessment', other)
+        with self.assertRaises(ValueError):
+            self.records.award_credential(uid, 'training', 'PILOT', 'Duplicate', other)
+        medal = self.records.award_credential(uid, 'commendation', 'Teamwork', 'Supported the team', other)
+        with self.assertRaises(ValueError):
+            self.records.revoke_credential(medal, 'training', 'Wrong kind', other)
+        self.records.revoke_credential(cert, 'training', 'Needs refresher', other)
+        with self.assertRaises(ValueError):
+            self.records.revoke_credential(cert, 'training', 'Again', other)
+        self.records.award_credential(uid, 'training', 'Pilot', 'Refresher completed', other)
+        theirs = self.records.award_credential(other, 'training', 'Investigator', f'Review with {uid}', uid)
+        self.records.db.close()
+        self.records = Records(self.path)
+        self.assertEqual(self.records.db.execute('SELECT callsign FROM dossiers WHERE member_id=?', (str(uid),)).fetchone()[0], 'GOI-25')
+        self.assertEqual(self.records.db.execute('SELECT COUNT(*) FROM credentials WHERE member_id=? AND active=1', (str(uid),)).fetchone()[0], 2)
+        self.assertNotIn('GOI-25', str(UIUBot(1,self.records).stats()))
+        self.records.erase_user(uid)
+        dump = '\n'.join(self.records.db.iterdump())
+        self.assertNotIn(str(uid), dump)
+        self.assertIsNotNone(self.records.db.execute('SELECT id FROM credentials WHERE id=?', (theirs,)).fetchone())
+
+    def test_service_command_permissions_and_help_length(self):
+        from unittest.mock import AsyncMock
+        bot = UIUBot(123, self.records)
+        install_commands(bot)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=10,display_name='Agent'),
+            guild=SimpleNamespace(fetch_member=AsyncMock(return_value=SimpleNamespace(guild_permissions=SimpleNamespace(manage_guild=False),roles=[]))),
+            response=SimpleNamespace(send_message=AsyncMock()))
+        async def run():
+            for kind in ('training','commendation'):
+                group = bot.tree.get_command(kind)
+                for name in ('award','revoke'):
+                    self.assertIn(staff_check, group.get_command(name).checks)
+                await group.get_command('list').callback(interaction)
+                with self.assertRaises(app_commands.CheckFailure):
+                    await group.get_command('list').callback(interaction,SimpleNamespace(id=20))
+                with self.assertRaises(ValueError):
+                    await group.get_command('award').callback(interaction,SimpleNamespace(id=10,bot=False),'Medal','Reason')
+            await bot.tree.get_command('dossier').get_command('view').callback(interaction)
+            self.assertIn(staff_check,bot.tree.get_command('dossier').get_command('set').checks)
+            await bot.tree.get_command('help').callback(interaction)
+            call = interaction.response.send_message.call_args
+            if call.args:
+                self.assertLessEqual(len(call.args[0]),2000)
+            else:
+                self.assertLessEqual(len(call.kwargs['embed'].description),4096)
+        asyncio.run(run())
 
     def test_staff_permission_denial(self):
         async def fetch_member(user_id):
