@@ -121,3 +121,16 @@ Bot-Hosting's official backup article confirms encrypted off-server backups: htt
 Ask hosting support: "Does the live filesystem/volume storing my deployment's data/uiu.sqlite3 use encryption at rest, including temporary storage and snapshots? I need confirmation for Discord Developer Terms section 5(c), not just HTTPS or off-server backup encryption. What encryption/key management applies, and how can I remove personal data from retained backups?"
 
 Until this is answered, do not claim full encryption-at-rest compliance. Protect or encrypt downloaded exports separately. Published policy URLs and these commands do not themselves constitute Discord verification or legal certification.
+
+## Agent dossiers, training and commendations
+
+Replace bot.py with the latest code, save and restart. No new requirements or environment variables. New tables are added without resetting existing records.
+
+- `/dossier view [member]` or `/profile [member]`: private dossier showing department, callsign, highest Discord role, existing case/operation counts, and active qualifications/commendations. Members can see themselves; viewing others requires Manage Server or STAFF_ROLE_ID.
+- `/dossier set member department callsign`: staff set the two dossier fields. This does not change Discord roles. The highest role shown is read from Discord and is not necessarily a server's designated rank.
+- `/training award member title reason`: staff record a completed qualification, for example Pilot or Field Investigator.
+- `/training list [member] [page]`: active and revoked records, four per page.
+- `/training revoke record_id reason`: staff invalidate a qualification without erasing its history.
+- `/commendation award member title reason`, `/commendation list [member] [page]`, `/commendation revoke record_id reason`: same workflow for medals and recognition.
+
+Staff cannot award themselves or bot accounts. Active titles are unique per member and type, ignoring capitalization and repeated spaces; repeated submissions do not create duplicates. A revoked title may be awarded again. Records are private, persist across restarts, are included in database backups, and are covered by `/privacy erase`. No role rewards or public announcements are sent by these commands.
