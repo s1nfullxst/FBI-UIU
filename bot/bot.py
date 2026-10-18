@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import io
 import logging
 import os
 import sqlite3
@@ -68,7 +69,33 @@ class Records:
                 operation_id INTEGER NOT NULL, member_id TEXT NOT NULL, joined_at TEXT NOT NULL,
                 PRIMARY KEY(operation_id,member_id)
             );
+            CREATE TABLE IF NOT EXISTS attendance(
+                operation_id INTEGER NOT NULL, member_id TEXT NOT NULL,
+                present INTEGER NOT NULL CHECK(present IN (0,1)),
+                confirmed_by TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(operation_id,member_id)
+            );
         """)
+
+    def mark_attendance(self, operation_id, member_id, present, actor):
+        row = self.operation(operation_id)
+        if row is None or row['status'] == 'cancelled':
+            raise ValueError('Choose an existing operation that is not cancelled.')
+        if datetime.fromisoformat(row['starts_at']) > datetime.now(timezone.utc):
+            raise ValueError('Attendance can only be confirmed after the scheduled start time.')
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO attendance VALUES(?,?,?,?,?)',
+                (operation_id, str(member_id), int(present), str(actor), now()))
+            self.audit(actor, 'operation.attendance', json.dumps({'operation': operation_id, 'member': member_id, 'present': present}))
+
+    def backup_bytes(self):
+        # SQLite's backup API creates a consistent snapshot while the bot is running.
+        snapshot = sqlite3.connect(':memory:')
+        try:
+            self.db.backup(snapshot)
+            return snapshot.serialize()
+        finally:
+            snapshot.close()
 
     def add_note(self, case_id, author, body, evidence_url=''):
         case = self.get(case_id)
@@ -125,6 +152,7 @@ class Records:
         for row in self.db.execute('SELECT o.status,COUNT(*) n FROM operations o JOIN signups s ON s.operation_id=o.id WHERE s.member_id=? GROUP BY o.status', (str(member_id),)):
             if row['status'] in ('scheduled', 'completed'):
                 counts[row['status'] + '_operations'] = row['n']
+        counts['verified_completed'] = self.db.execute("SELECT COUNT(*) FROM attendance a JOIN operations o ON o.id=a.operation_id WHERE a.member_id=? AND a.present=1 AND o.status='completed'", (str(member_id),)).fetchone()[0]
         return counts
 
     def setting(self, key, value=None):
@@ -502,7 +530,8 @@ def install_commands(bot):
         embed.add_field(name='Assigned closed cases', value=str(data['closed']))
         embed.add_field(name='Scheduled operation sign-ups', value=str(data['scheduled_operations']))
         embed.add_field(name='Completed operation sign-ups', value=str(data['completed_operations']))
-        embed.set_footer(text='Sign-up history is not verified attendance. Case counts reflect current assignments.')
+        embed.add_field(name='Verified completed operations', value=str(data['verified_completed']))
+        embed.set_footer(text='Verified attendance is confirmed by staff. Case counts reflect current assignments.')
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @cases.command(name='assign', description='Assign a lead agent to an open case')
@@ -596,6 +625,40 @@ def install_commands(bot):
 
     bot.tree.add_command(operations)
 
+    @operations.command(name='attendance', description='Staff: confirm or correct a member attendance record')
+    @app_commands.check(staff_check)
+    async def operation_attendance(interaction: discord.Interaction, operation_id: app_commands.Range[int, 1], member: discord.Member, present: bool):
+        if member.bot:
+            raise ValueError('Choose a human member.')
+        bot.records.mark_attendance(operation_id, member.id, present, interaction.user.id)
+        await interaction.response.send_message(f'Attendance saved for {member.display_name}: {"present" if present else "absent"}. Verified profile credit applies when the operation is completed.', ephemeral=True)
+
+    @operations.command(name='attendance_list', description='Staff: view recorded attendance, twenty members per page')
+    @app_commands.check(staff_check)
+    async def attendance_list(interaction: discord.Interaction, operation_id: app_commands.Range[int, 1], page: app_commands.Range[int, 1, 100000] = 1):
+        if bot.records.operation(operation_id) is None:
+            raise ValueError('That operation ID does not exist.')
+        rows = bot.records.db.execute('SELECT * FROM attendance WHERE operation_id=? ORDER BY member_id LIMIT 20 OFFSET ?', (operation_id, (page-1)*20)).fetchall()
+        lines = '\n'.join(f"<@{r['member_id']}> — {'Present' if r['present'] else 'Absent'}" for r in rows)
+        await interaction.response.send_message(f'**Operation #{operation_id} attendance | Page {page}**\n' + (lines or 'No recorded attendance on this page. Unrecorded members are not automatically absent.'), ephemeral=True)
+
+    @bot.tree.command(name='backup', description='Manage Server only: privately download a database backup')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.checks.cooldown(1, 60, key=lambda i: i.guild_id)
+    async def backup(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        with bot.records.db:
+            bot.records.audit(interaction.user.id, 'backup.export', 'Database snapshot requested')
+        payload = bot.records.backup_bytes()
+        if len(payload) > interaction.guild.filesize_limit:
+            await interaction.followup.send('Backup exceeds the server attachment limit. Stop the bot and download data/uiu.sqlite3 through the hosting Files tab instead.', ephemeral=True)
+            return
+        filename = 'uiu-backup-' + datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S') + '.sqlite3'
+        await interaction.followup.send('Download this backup now and keep it private: it includes case notes, evidence links and member records. It contains no bot token. Restore only while the bot is stopped.',
+            file=discord.File(io.BytesIO(payload), filename=filename), ephemeral=True)
+
     @bot.tree.command(name="promotion", description="Give a member a rank; optionally remove their previous rank")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_roles=True)
@@ -662,6 +725,8 @@ def install_commands(bot):
             "`/case note` / `/case notes` — staff-only notes and evidence links\n"
             "`/mycases` / `/profile` — your assignments and agent summary\n"
             "Operation Join/Leave buttons manage your sign-up. `/operation roster` is staff-only.\n\n"
+            "`/operation attendance` / `attendance_list` — staff-confirmed attendance\n"
+            "`/backup` — private database download (Manage Server required)\n\n"
             "Cases and operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
             "Promotion and operation announcements go to the configured channels; case details stay private.", ephemeral=True)
 
