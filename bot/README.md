@@ -20,7 +20,7 @@ Never paste tokens into bot.py, screenshots, chat or GitHub.
 
 ## Commands
 
-- `/promotion member new_rank reason [previous_rank]`: gives the new role and optionally removes the previous role. Requires Manage Roles, respects both the invoker's and bot's role hierarchy, and blocks self-promotion. The confirmation embed is private; no public announcement is sent.
+- `/promotion member new_rank reason [previous_rank]`: gives the new role and optionally removes the previous role. Requires Manage Roles, respects both the invoker's and bot's role hierarchy, and blocks self-promotion. Posts a promotion announcement in the configured channel and privately confirms the result.
 - `/case open title description`: creates a case and returns its numeric ID.
 - `/case close case_id resolution`: closes that case.
 - `/case reopen case_id reason`: reopens it without erasing the audit history.
@@ -29,7 +29,22 @@ Never paste tokens into bot.py, screenshots, chat or GitHub.
 - `/stats`: displays member and case counts.
 - `/help`: lists commands and permissions.
 
-Cases require Manage Server or STAFF_ROLE_ID. Cases start empty: existing website PDF archives are not automatically imported or assigned open/closed status. Create records for those cases if they should count.
+Cases require Manage Server or STAFF_ROLE_ID. On the first start of this update, Missouri UIU File #3 and Wyoming UIU File #1 are imported as CLOSED, as confirmed by management. These are short records linking to the existing website reports, not copies of all PDF text. Recognized existing records are preserved, including their current statuses; no case is reset on later restarts. Database IDs are assigned automatically and may differ from the original PDF file numbers. Use `/case list status:closed` to find them.
+
+## New commands
+
+- `/setup channels promotions:#promotions operations:#operations`: choose where announcements go. Requires Manage Server. The bot needs View Channel, Send Messages and Embed Links in both channels. The person making an announcement also needs access and Send Messages in that channel. No mass pings are sent.
+- `/case assign case_id member`: assign one lead agent to an open case (replaces the previous assignment).
+- `/case unassign case_id`: remove the lead agent. `/case view` shows the assignment. Closed cases retain their assignment history and must be reopened before reassignment.
+- `/operation schedule title game starts_at briefing`: create and announce an operation. Example time: `2026-10-20T19:00+02:00`. Use the actual UTC offset for the event date. Discord displays the saved time in each viewer's timezone.
+- `/operation list [page]` and `/operation view operation_id`: let members view scheduled operations and briefings.
+- `/operation cancel operation_id` and `/operation complete operation_id`: update and announce a scheduled operation's status. These actions require staff permissions, as does scheduling.
+
+Operations persist in SQLite and have numeric IDs. Scheduling posts a briefing now; it does not send timed reminders or create a Discord Scheduled Event. If an announcement fails, the operation/promotion remains saved and the bot reports the failure. Do not repeat a promotion to retry an announcement.
+
+## Updating an existing deployment
+
+Stop the bot and back up `data/uiu.sqlite3`. Replace only `bot.py`, retain your Environment settings and data folder, then restart. Dependencies are unchanged. New tables are created alongside existing records. Run `/setup channels` once after restarting.
 
 ## Website connection
 
