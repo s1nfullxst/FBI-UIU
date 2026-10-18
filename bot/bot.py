@@ -6,6 +6,7 @@ import json
 import io
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,7 @@ class Records:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
+        self.db.execute('PRAGMA secure_delete=ON')
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +77,46 @@ class Records:
                 confirmed_by TEXT NOT NULL, updated_at TEXT NOT NULL,
                 PRIMARY KEY(operation_id,member_id)
             );
+            CREATE TABLE IF NOT EXISTS privacy_requests(
+                member_id TEXT PRIMARY KEY, requested_at TEXT NOT NULL
+            );
         """)
+
+    def request_deletion(self, member_id):
+        with self.db:
+            self.db.execute('INSERT OR IGNORE INTO privacy_requests VALUES(?,?)', (str(member_id), now()))
+
+    def erase_user(self, member_id):
+        """Remove structured identity links and ID references; external copies need manual review."""
+        uid = str(member_id)
+        if not re.fullmatch(r'[0-9]{5,22}', uid):
+            raise ValueError('Enter the numeric Discord user ID, not a mention or name.')
+        pattern = re.compile(r'(?<![0-9])' + re.escape(uid) + r'(?![0-9])')
+        removed = '[removed]'
+        with self.db:
+            for table in ('assignments', 'signups', 'attendance', 'privacy_requests'):
+                self.db.execute(f'DELETE FROM {table} WHERE member_id=?', (uid,))
+            self.db.execute('DELETE FROM case_notes WHERE author=?', (uid,))
+            self.db.execute("UPDATE cases SET created_by=?,title=?,description=?,resolution=? WHERE created_by=?", (removed, 'Removed case content', removed, removed, uid))
+            self.db.execute("UPDATE operations SET created_by=?,title=?,briefing=? WHERE created_by=?", (removed, 'Removed operation content', removed, uid))
+            self.db.execute('UPDATE attendance SET confirmed_by=? WHERE confirmed_by=?', (removed, uid))
+            self.db.execute('DELETE FROM audit WHERE actor=?', (uid,))
+            # Erase whole related audit entries, preserving valid JSON in the others.
+            for row in self.db.execute('SELECT id,detail FROM audit').fetchall():
+                if pattern.search(row['detail']):
+                    self.db.execute('DELETE FROM audit WHERE id=?', (row['id'],))
+            for table, columns in (
+                ('cases', ('title','description','resolution')),
+                ('operations', ('title','briefing')),
+                ('case_notes', ('body','evidence_url')),
+            ):
+                for row in self.db.execute(f"SELECT id,{','.join(columns)} FROM {table}").fetchall():
+                    for column in columns:
+                        if pattern.search(row[column]):
+                            value = '' if column == 'evidence_url' else pattern.sub(removed, row[column])
+                            self.db.execute(f'UPDATE {table} SET {column}=? WHERE id=?', (value,row['id']))
+        # Rebuild the current SQLite file, removing free-page remnants. This cannot erase provider snapshots.
+        self.db.execute('VACUUM')
 
     def mark_attendance(self, operation_id, member_id, present, actor):
         row = self.operation(operation_id)
@@ -448,6 +489,46 @@ async def staff_check(interaction):
 
 
 def install_commands(bot):
+    privacy = app_commands.Group(name='privacy', description='Privacy policy and data deletion requests', guild_only=True)
+
+    @privacy.command(name='policy', description='Read the privacy policy and terms')
+    async def privacy_policy(interaction: discord.Interaction):
+        await interaction.response.send_message(
+            'Privacy: https://s1nfullxst.github.io/FBI-UIU/privacy.html\n'
+            'Terms: https://s1nfullxst.github.io/FBI-UIU/terms.html\n'
+            'Use `/privacy request` to ask for deletion. Requests are reviewed by an administrator; '
+            'contact the bot operator privately for access, correction or export.', ephemeral=True)
+
+    @privacy.command(name='request', description='Ask an administrator to delete your bot data')
+    async def privacy_request(interaction: discord.Interaction):
+        bot.records.request_deletion(interaction.user.id)
+        await interaction.response.send_message(
+            'Your deletion request is saved for administrator review. This does not delete anything yet. '
+            'Please contact the bot operator privately so they can review free-text mentions, Discord posts and backups too. '
+            'Repeated requests do not create duplicates.', ephemeral=True)
+
+    @privacy.command(name='requests', description='Manage Server: view pending deletion requests')
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def privacy_requests(interaction: discord.Interaction, page: app_commands.Range[int,1,100000] = 1):
+        rows = bot.records.db.execute('SELECT * FROM privacy_requests ORDER BY requested_at LIMIT 10 OFFSET ?', ((page-1)*10,)).fetchall()
+        text = '\n'.join(f"User ID: `{r['member_id']}` | {r['requested_at']}" for r in rows)
+        await interaction.response.send_message(text or 'No pending requests on this page.', ephemeral=True)
+
+    @privacy.command(name='erase', description='Manage Server: irreversibly remove user links and authored text after a verified request')
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(user_id='Numeric Discord user ID, including members who have left', confirmation='Type DELETE followed by a space and the same user ID')
+    async def privacy_erase(interaction: discord.Interaction, user_id: str, confirmation: str):
+        if not re.fullmatch(r'[0-9]{5,22}', user_id) or confirmation != 'DELETE ' + user_id:
+            raise ValueError('Verify the request first. Confirm with DELETE followed by a space and the exact numeric user ID. This permanently removes authored notes and case/operation text as well as identity links.')
+        await interaction.response.defer(ephemeral=True)
+        bot.records.erase_user(user_id)
+        await interaction.followup.send(
+            'Structured user records, authored notes/content and exact user-ID references were removed from the active database. '
+            'This is not a complete deletion of every copy. Review names/aliases in other people\'s text, website archives, '
+            'Discord posts/attachments, downloaded exports and host backups. Do not restore an old backup without reapplying deletion. '
+            'Contact the requester privately after completing that review.', ephemeral=True)
+
+    bot.tree.add_command(privacy)
     cases = app_commands.Group(name="case", description="UIU case records", guild_only=True)
 
     @cases.command(name="open", description="Open a new case and receive its ID")
@@ -737,6 +818,8 @@ def install_commands(bot):
             "Operation Join/Leave buttons manage your sign-up. `/operation roster` is staff-only.\n\n"
             "`/operation attendance` / `attendance_list` — staff-confirmed attendance\n"
             "`/backup` — private database download (Manage Server required)\n\n"
+            "`/privacy policy` / `request` - policies and deletion requests\n"
+            "`/privacy requests` / `erase` - administrator privacy handling\n\n"
             "Cases and operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
             "Promotion and operation announcements go to the configured channels; case details stay private.", ephemeral=True)
 
