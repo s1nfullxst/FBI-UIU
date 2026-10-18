@@ -44,6 +44,18 @@ Operations persist in SQLite and have numeric IDs. Scheduling posts a briefing n
 
 ## Updating an existing deployment
 
+### Case notes, sign-ups and agent summaries
+
+- `/case note case_id text [evidence_url]`: staff can add a note and an optional HTTPS evidence link to an open case. Links are stored, not fetched or downloaded. Keep the linked file's sharing permissions appropriate; this bot does not manage external file access.
+- `/case notes case_id [page]`: staff-only, private response with three notes per page. Notes retain their author and creation time and survive restarts.
+- Operation announcements now have **Join operation** and **Leave operation** buttons. Members can only change their own sign-up. Duplicate joins are ignored. Sign-ups lock when the scheduled start time arrives, or when the operation is completed/cancelled. Restarting restores the announcement buttons.
+- For an operation posted before this update, use `/operation view operation_id` to get a fresh briefing with buttons. Private briefing buttons expire after Discord's standard timeout; run the command again if needed. Public announcement buttons persist through bot restarts.
+- `/operation roster operation_id [page]`: staff-only, private roster, twenty members per page.
+- `/mycases [page]`: any member can privately see the IDs, titles and statuses of cases currently assigned to them. This grants no access to staff-only notes, evidence or other agents' cases.
+- `/profile [member]`: your own private summary of assigned open/closed cases and operation sign-ups. Only staff can inspect another member's profile. Completed operation counts mean sign-ups for completed operations, not verified attendance. Cancelled operations are excluded.
+
+These features use additional tables in the existing SQLite file. They require no new packages or privileged Discord intents. Case notes, evidence links, agent summaries and sign-up rosters are never exposed by the public `/stats` endpoint.
+
 Stop the bot and back up `data/uiu.sqlite3`. Replace only `bot.py`, retain your Environment settings and data folder, then restart. Dependencies are unchanged. New tables are created alongside existing records. Run `/setup channels` once after restarting.
 
 ## Website connection
