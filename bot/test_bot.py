@@ -78,7 +78,7 @@ class BotTests(unittest.TestCase):
         bot = UIUBot(123, self.records)
         install_commands(bot)
         commands = {cmd.name: cmd for cmd in bot.tree.get_commands()}
-        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile', 'backup'})
+        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile', 'backup', 'privacy'})
         self.assertEqual({c.name for c in commands['case'].commands}, {'open', 'close', 'reopen', 'view', 'list', 'assign', 'unassign', 'note', 'notes'})
         for cmd in commands.values():
             cmd.to_dict(bot.tree)  # Validate Discord command schemas, including option types.
@@ -110,6 +110,50 @@ class BotTests(unittest.TestCase):
         for i in range(15):
             self.records.schedule('Additional', 'Private', 'ERLC', '2099-11-20T19:00Z', 1)
         self.assertEqual(len(UIUBot(123, self.records).public_activity()['upcoming_operations']), 12)
+
+    def test_privacy_erasure_and_restart(self):
+        uid = 123456789012345678
+        other = 223456789012345678
+        mine = self.records.create('Private authored title', 'Private authored description', uid)
+        theirs = self.records.create('Keep this case', f'Reference <@{uid}>; unrelated {other}', other)
+        self.records.add_note(theirs, uid, 'My private note')
+        self.records.add_note(theirs, other, f'About {uid}', f'https://example.com/{uid}')
+        self.records.assign(theirs, uid, other)
+        op = self.records.schedule('Authored operation', 'My private briefing', 'ERLC', '2099-10-20T19:00Z', uid)
+        self.records.signup(op, uid, True)
+        with self.records.db:
+            self.records.db.execute("UPDATE operations SET starts_at='2020-01-01T00:00:00+00:00' WHERE id=?", (op,))
+        self.records.mark_attendance(op, uid, True, other)
+        self.records.mark_attendance(op, other, True, uid)
+        self.records.request_deletion(uid)
+        self.records.request_deletion(uid)
+        self.assertEqual(self.records.db.execute('SELECT COUNT(*) FROM privacy_requests').fetchone()[0], 1)
+        self.records.erase_user(uid)
+        self.records.db.close()
+        self.records = Records(self.path)
+        dump = '\n'.join(self.records.db.iterdump())
+        for text in (str(uid), 'Private authored title', 'Private authored description', 'My private note', 'My private briefing'):
+            self.assertNotIn(text, dump)
+        self.assertIn(str(other), dump)
+        self.assertIn('Keep this case', dump)
+        self.assertEqual(self.records.get(mine)['status'], 'open')
+        self.assertEqual(self.records.db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+        self.records.erase_user(uid)  # safe to reapply after restoring an old backup
+
+    def test_privacy_commands_permissions_and_confirmation(self):
+        bot = UIUBot(123, self.records)
+        install_commands(bot)
+        group = bot.tree.get_command('privacy')
+        denied = SimpleNamespace(permissions=SimpleNamespace(manage_guild=False))
+        for name in ('requests', 'erase'):
+            command = group.get_command(name)
+            with self.assertRaises(app_commands.CheckFailure):
+                asyncio.run(command.checks[0](denied))
+        with self.assertRaises(ValueError):
+            asyncio.run(group.get_command('erase').callback(None, '123456', 'DELETE 999999'))
+        with self.assertRaises(ValueError):
+            self.records.erase_user('not an ID')
+        self.assertEqual(len(group.get_command('request').checks), 0)
 
     def test_staff_permission_denial(self):
         async def fetch_member(user_id):
