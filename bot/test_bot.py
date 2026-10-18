@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from bot import Records, UIUBot, install_commands, promotion_problem, staff_check, operation_time
+from bot import Records, UIUBot, install_commands, promotion_problem, staff_check, operation_time, OperationSignup
 from discord import app_commands
 
 
@@ -78,8 +78,8 @@ class BotTests(unittest.TestCase):
         bot = UIUBot(123, self.records)
         install_commands(bot)
         commands = {cmd.name: cmd for cmd in bot.tree.get_commands()}
-        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation'})
-        self.assertEqual({c.name for c in commands['case'].commands}, {'open', 'close', 'reopen', 'view', 'list', 'assign', 'unassign'})
+        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile'})
+        self.assertEqual({c.name for c in commands['case'].commands}, {'open', 'close', 'reopen', 'view', 'list', 'assign', 'unassign', 'note', 'notes'})
         for cmd in commands.values():
             cmd.to_dict(bot.tree)  # Validate Discord command schemas, including option types.
         payload = bot.stats()
@@ -149,6 +149,80 @@ class BotTests(unittest.TestCase):
         result = asyncio.run(bot.announce(None, 'operation_channel', discord.Embed(title='Test')))
         self.assertIn('announcement failed', result)
         self.assertEqual(self.records.operation(operation_id)['status'], 'scheduled')
+
+    def test_notes_validation_persistence_and_privacy(self):
+        case_id = self.records.create('Notes test', 'Details', 1)
+        self.records.add_note(case_id, 1, 'Private note', 'https://example.com/evidence')
+        for url in ('http://example.com', 'javascript:alert(1)', 'https://user:pass@example.com', 'https://example.com/a b'):
+            with self.assertRaises(ValueError):
+                self.records.add_note(case_id, 1, 'Note', url)
+        self.records.db.close()
+        self.records = Records(self.path)
+        self.assertEqual(self.records.notes(case_id, 1)[0]['body'], 'Private note')
+        bot = UIUBot(123, self.records)
+        install_commands(bot)
+        for name in ('note', 'notes'):
+            self.assertIn(staff_check, bot.tree.get_command('case').get_command(name).checks)
+        self.assertNotIn('Private note', str(bot.stats()))
+        self.records.transition(case_id, 'closed', 'Done', 1)
+        with self.assertRaises(ValueError):
+            self.records.add_note(case_id, 1, 'Not allowed')
+
+    def test_signup_duplicates_restart_and_profiles(self):
+        op = self.records.schedule('Patrol', 'Briefing', 'BRM5', '2099-10-20T19:00Z', 1)
+        self.records.signup(op, 10, True)
+        self.assertIn('already', self.records.signup(op, 10, True))
+        self.records.signup(op, 20, True)
+        self.records.signup(op, 20, False)
+        case_id = self.records.create('Agent case', 'Private', 1)
+        self.records.assign(case_id, 10, 1)
+        self.records.db.close()
+        self.records = Records(self.path)
+        self.assertEqual(len(self.records.my_cases(10)), 1)
+        self.assertEqual(self.records.my_cases(20), [])
+        self.assertEqual(self.records.profile(10)['scheduled_operations'], 1)
+        self.assertEqual(self.records.profile(20)['scheduled_operations'], 0)
+        self.records.operation_status(op, 'completed', 1)
+        self.assertEqual(self.records.profile(10)['completed_operations'], 1)
+        with self.assertRaises(ValueError):
+            self.records.signup(op, 10, False)
+
+    def test_buttons_restore_and_scope(self):
+        from unittest.mock import AsyncMock
+        async def run():
+            op = self.records.schedule('Patrol', 'Briefing', 'ERLC', '2099-10-20T19:00Z', 1)
+            bot = UIUBot(123, self.records)
+            old_view = OperationSignup(bot, op)
+            restored = OperationSignup(bot, op)
+            self.assertTrue(restored.is_persistent())
+            self.assertEqual([b.custom_id for b in old_view.children], [b.custom_id for b in restored.children])
+            interaction = SimpleNamespace(guild_id=999, user=SimpleNamespace(id=10, bot=False), response=SimpleNamespace(send_message=AsyncMock()))
+            await restored.children[0].callback(interaction)
+            self.assertEqual(self.records.profile(10)['scheduled_operations'], 0)
+            interaction.guild_id = 123
+            await restored.children[0].callback(interaction)
+            self.assertEqual(self.records.profile(10)['scheduled_operations'], 1)
+            await restored.children[1].callback(interaction)
+            self.assertEqual(self.records.profile(10)['scheduled_operations'], 0)
+            with self.records.db:
+                self.records.db.execute("UPDATE operations SET starts_at='2000-01-01T12:00:00+00:00' WHERE id=?", (op,))
+            with self.assertRaises(ValueError):
+                self.records.signup(op, 10, True)
+        asyncio.run(run())
+
+    def test_other_profile_requires_staff(self):
+        from unittest.mock import AsyncMock
+        bot = UIUBot(123, self.records)
+        install_commands(bot)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=10, display_name='Agent'),
+            guild=SimpleNamespace(fetch_member=AsyncMock(return_value=SimpleNamespace(guild_permissions=SimpleNamespace(manage_guild=False), roles=[]))),
+            response=SimpleNamespace(send_message=AsyncMock()))
+        async def run():
+            await bot.tree.get_command('profile').callback(interaction)
+            interaction.response.send_message.assert_awaited_once()
+            with self.assertRaises(app_commands.CheckFailure):
+                await bot.tree.get_command('profile').callback(interaction, SimpleNamespace(id=20))
+        asyncio.run(run())
 
 
 if __name__ == '__main__':
