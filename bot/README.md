@@ -134,3 +134,13 @@ Replace bot.py with the latest code, save and restart. No new requirements or en
 - `/commendation award member title reason`, `/commendation list [member] [page]`, `/commendation revoke record_id reason`: same workflow for medals and recognition.
 
 Staff cannot award themselves or bot accounts. Active titles are unique per member and type, ignoring capitalization and repeated spaces; repeated submissions do not create duplicates. A revoked title may be awarded again. Records are private, persist across restarts, are included in database backups, and are covered by `/privacy erase`. No role rewards or public announcements are sent by these commands.
+
+## Public website announcements and new member guide
+
+- `/announcement publish title message`: staff explicitly publish text to everyone on the website. Titles are 1-100 characters and messages 1-1200. Do not include private information. Duplicate title/message submissions return the existing ID.
+- `/announcement list [page]`: staff list saved IDs, ten per page.
+- `/announcement remove announcement_id`: staff remove a post. Viewers see the change on the next successful refresh; external copies cannot be recalled.
+
+All commands require Manage Server or STAFF_ROLE_ID. Publishing does not send a Discord announcement or ping. The public /stats feed includes only the latest five announcements, without publisher IDs. Records persist across restarts and are included in backups. Privacy erasure removes posts authored by the subject and exact ID references in other posts; manually review names and external copies.
+
+The website includes an Updates section and a Start here guide. It polls once a minute, distinguishes an empty feed from unavailable data, and marks cached announcements as stale after a connection failure. Install this bot.py update and restart to enable the new feed; no new settings or dependencies.
