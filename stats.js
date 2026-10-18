@@ -1,3 +1,14 @@
+(() => {
+  const footer = document.querySelector('footer');
+  if (!footer) return;
+  const links = document.createElement('nav');
+  links.setAttribute('aria-label', 'Bot policies');
+  links.style.cssText = 'display:flex;gap:20px;flex-wrap:wrap;padding:12px 0;font-size:13px';
+  for (const [title, href] of [['Terms of Service', './terms.html'], ['Privacy Policy', './privacy.html']]) {
+    const link = document.createElement('a'); link.href = href; link.textContent = title; links.append(link);
+  }
+  footer.append(links);
+})();
 /* Public website enhancements. No private case or member records are requested. */
 (() => {
   'use strict';
