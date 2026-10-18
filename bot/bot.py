@@ -22,6 +22,16 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def operation_time(value):
+    try:
+        date = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+    except ValueError:
+        raise ValueError('Use a date like 2026-10-20T19:00+02:00, including your UTC offset.')
+    if date.tzinfo is None or date <= datetime.now(timezone.utc):
+        raise ValueError('Enter a future time including its UTC offset, for example +02:00.')
+    return date.astimezone(timezone.utc).isoformat()
+
+
 class Records:
     def __init__(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -40,6 +50,81 @@ class Records:
                 actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL
             );
         """)
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS assignments(case_id INTEGER PRIMARY KEY, member_id TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS operations(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+                briefing TEXT NOT NULL, game TEXT NOT NULL, starts_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'scheduled', created_by TEXT NOT NULL
+            );
+        """)
+
+    def setting(self, key, value=None):
+        if value is not None:
+            with self.db:
+                self.db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (key, str(value)))
+        row = self.db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+        return row['value'] if row else None
+
+    def seed_archives(self):
+        # One-time import. Never resets an existing case or repeats after a restart.
+        if self.setting('archives_v1'):
+            return
+        with self.db:
+            for title, aliases in [('Wyoming UIU File #1', ('wyoming', 'wyoming uiu file #1', 'wyoming case file #1')),
+                                   ('Missouri UIU File #3', ('missouri', 'missouri uiu file #3', 'missouri uiu file 3'))]:
+                existing = self.db.execute('SELECT title FROM cases').fetchall()
+                if any(row['title'].strip().lower() in aliases for row in existing):
+                    continue
+                date = now()
+                self.db.execute("INSERT INTO cases(title,description,status,created_by,created_at,updated_at,resolution) VALUES(?,?,'closed','archive-import',?,?,?)",
+                    (title, 'Existing website archive: https://s1nfullxst.github.io/FBI-UIU/#case-files', date, date,
+                     'Confirmed completed by server management. Imported closed.'))
+                self.audit('archive-import', 'case.import', title)
+            self.db.execute("INSERT INTO settings VALUES('archives_v1','done')")
+
+    def assign(self, case_id, member_id, actor):
+        row = self.get(case_id)
+        if row is None:
+            raise ValueError('That case ID does not exist.')
+        if row['status'] != 'open':
+            raise ValueError('Reopen this case before changing its assignment.')
+        with self.db:
+            if member_id is None:
+                self.db.execute('DELETE FROM assignments WHERE case_id=?', (case_id,))
+            else:
+                self.db.execute('INSERT OR REPLACE INTO assignments VALUES(?,?)', (case_id, str(member_id)))
+            self.audit(actor, 'case.assign', json.dumps({'case': case_id, 'member': member_id}))
+
+    def assignee(self, case_id):
+        row = self.db.execute('SELECT member_id FROM assignments WHERE case_id=?', (case_id,)).fetchone()
+        return row['member_id'] if row else None
+
+    def schedule(self, title, briefing, game, starts_at, actor):
+        date = operation_time(starts_at)
+        if not title.strip() or not briefing.strip():
+            raise ValueError('Enter a title and briefing.')
+        if game not in ('ERLC', 'BRM5', 'Both'):
+            raise ValueError('Choose ERLC, BRM5 or Both.')
+        with self.db:
+            cursor = self.db.execute('INSERT INTO operations(title,briefing,game,starts_at,created_by) VALUES(?,?,?,?,?)',
+                (title.strip(), briefing.strip(), game, date, str(actor)))
+            self.audit(actor, 'operation.schedule', str(cursor.lastrowid))
+        return cursor.lastrowid
+
+    def operation(self, operation_id):
+        return self.db.execute('SELECT * FROM operations WHERE id=?', (operation_id,)).fetchone()
+
+    def operation_status(self, operation_id, status, actor):
+        row = self.operation(operation_id)
+        if row is None:
+            raise ValueError('That operation ID does not exist.')
+        if row['status'] != 'scheduled' or status not in ('completed', 'cancelled'):
+            raise ValueError('Only scheduled operations can be completed or cancelled.')
+        with self.db:
+            self.db.execute('UPDATE operations SET status=? WHERE id=?', (status, operation_id))
+            self.audit(actor, 'operation.' + status, str(operation_id))
 
     def audit(self, actor, action, detail):
         self.db.execute("INSERT INTO audit(time,actor,action,detail) VALUES(?,?,?,?)",
@@ -192,6 +277,22 @@ class UIUBot(discord.Client):
     async def health_route(self, request):
         return web.json_response({"ready": self.is_ready()}, status=200 if self.is_ready() else 503)
 
+    async def announce(self, interaction, key, embed):
+        channel_id = self.records.setting(key)
+        if not channel_id or channel_id == '0':
+            return 'No announcement channel configured; use /setup channels.'
+        try:
+            channel = await self.fetch_channel(int(channel_id))
+            actor = await interaction.guild.fetch_member(interaction.user.id)
+            if (not isinstance(channel, discord.TextChannel) or channel.guild.id != self.guild_id
+                    or not channel.permissions_for(actor).view_channel
+                    or not channel.permissions_for(actor).send_messages):
+                return 'Saved, but you cannot announce in the configured channel.'
+            await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            return 'Announcement posted.'
+        except discord.HTTPException:
+            return 'Saved, but the announcement failed. Check channel permissions; do not repeat the action.'
+
     async def close(self):
         self.refresh_members.cancel()
         if self.runner:
@@ -243,6 +344,8 @@ def install_commands(bot):
         embed = discord.Embed(title=f"Case #{row['id']} | {row['title']}", description=row["description"], color=GOLD)
         embed.add_field(name="Status", value=row["status"].upper())
         embed.add_field(name="Opened", value=row["created_at"][:10])
+        assignee = bot.records.assignee(case_id)
+        embed.add_field(name='Assigned agent', value=f'<@{assignee}>' if assignee else 'Unassigned')
         if row["resolution"]:
             embed.add_field(name="Latest resolution / reopen reason", value=row["resolution"], inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -259,6 +362,87 @@ def install_commands(bot):
             title=f"{status.title()} cases | Page {page}", description=description or "No cases on this page.", color=GOLD), ephemeral=True)
 
     bot.tree.add_command(cases)
+
+    @cases.command(name='assign', description='Assign a lead agent to an open case')
+    @app_commands.check(staff_check)
+    async def case_assign(interaction: discord.Interaction, case_id: app_commands.Range[int, 1], member: discord.Member):
+        if member.bot:
+            raise ValueError('Choose a human agent.')
+        bot.records.assign(case_id, member.id, interaction.user.id)
+        await interaction.response.send_message(f'Case #{case_id} assigned to {member.display_name}.', ephemeral=True)
+
+    @cases.command(name='unassign', description='Remove the lead agent from an open case')
+    @app_commands.check(staff_check)
+    async def case_unassign(interaction: discord.Interaction, case_id: app_commands.Range[int, 1]):
+        bot.records.assign(case_id, None, interaction.user.id)
+        await interaction.response.send_message(f'Case #{case_id} is now unassigned.', ephemeral=True)
+
+    setup = app_commands.Group(name='setup', description='Configure UIU announcement channels', guild_only=True,
+                              default_permissions=discord.Permissions(manage_guild=True))
+
+    @setup.command(name='channels', description='Set promotion and operation announcement channels')
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def setup_channels(interaction: discord.Interaction, promotions: discord.TextChannel, operations: discord.TextChannel):
+        for channel in (promotions, operations):
+            perms = channel.permissions_for(interaction.guild.me)
+            if channel.guild.id != bot.guild_id or not (perms.view_channel and perms.send_messages and perms.embed_links):
+                raise ValueError('The bot needs View Channel, Send Messages and Embed Links in both channels.')
+        bot.records.setting('promotion_channel', promotions.id)
+        bot.records.setting('operation_channel', operations.id)
+        await interaction.response.send_message('Announcement channels saved. Promotions and operation changes will be posted there without pings.', ephemeral=True)
+
+    bot.tree.add_command(setup)
+    operations = app_commands.Group(name='operation', description='Schedule and manage UIU operations', guild_only=True)
+
+    def operation_embed(row):
+        date = datetime.fromisoformat(row['starts_at'])
+        embed = discord.Embed(title=f"Operation #{row['id']} | {row['title']}", description=row['briefing'], color=GOLD)
+        embed.add_field(name='Game', value=row['game'])
+        embed.add_field(name='Status', value=row['status'].upper())
+        embed.add_field(name='Start time', value=discord.utils.format_dt(date, 'F'), inline=False)
+        return embed
+
+    @operations.command(name='schedule', description='Schedule an operation and post its briefing')
+    @app_commands.choices(game=[app_commands.Choice(name=g, value=g) for g in ('ERLC', 'BRM5', 'Both')])
+    @app_commands.describe(starts_at='Date and UTC offset, e.g. 2026-10-20T19:00+02:00')
+    @app_commands.check(staff_check)
+    async def operation_schedule(interaction: discord.Interaction, title: app_commands.Range[str, 1, 100],
+                                 game: str, starts_at: str, briefing: app_commands.Range[str, 1, 2000]):
+        await interaction.response.defer(ephemeral=True)
+        operation_id = bot.records.schedule(title, briefing, game, starts_at, interaction.user.id)
+        result = await bot.announce(interaction, 'operation_channel', operation_embed(bot.records.operation(operation_id)))
+        await interaction.followup.send(f'Operation #{operation_id} scheduled. {result}', ephemeral=True)
+
+    @operations.command(name='view', description='Read an operation briefing')
+    async def operation_view(interaction: discord.Interaction, operation_id: app_commands.Range[int, 1]):
+        row = bot.records.operation(operation_id)
+        if row is None:
+            raise ValueError('That operation ID does not exist.')
+        await interaction.response.send_message(embed=operation_embed(row), ephemeral=True)
+
+    @operations.command(name='list', description='List scheduled operations, ten per page')
+    async def operation_list(interaction: discord.Interaction, page: app_commands.Range[int, 1, 100000] = 1):
+        rows = bot.records.db.execute("SELECT * FROM operations WHERE status='scheduled' ORDER BY starts_at LIMIT 10 OFFSET ?", ((page-1)*10,)).fetchall()
+        text = '\n'.join(f"**#{r['id']}** {discord.utils.escape_markdown(r['title'])} | <t:{int(datetime.fromisoformat(r['starts_at']).timestamp())}:f>" for r in rows)
+        await interaction.response.send_message(text or 'No scheduled operations on this page.', ephemeral=True)
+
+    async def finish_operation(interaction, operation_id, status):
+        await interaction.response.defer(ephemeral=True)
+        bot.records.operation_status(operation_id, status, interaction.user.id)
+        result = await bot.announce(interaction, 'operation_channel', operation_embed(bot.records.operation(operation_id)))
+        await interaction.followup.send(f'Operation #{operation_id} {status}. {result}', ephemeral=True)
+
+    @operations.command(name='cancel', description='Cancel a scheduled operation and announce it')
+    @app_commands.check(staff_check)
+    async def operation_cancel(interaction: discord.Interaction, operation_id: app_commands.Range[int, 1]):
+        await finish_operation(interaction, operation_id, 'cancelled')
+
+    @operations.command(name='complete', description='Mark an operation completed and announce it')
+    @app_commands.check(staff_check)
+    async def operation_complete(interaction: discord.Interaction, operation_id: app_commands.Range[int, 1]):
+        await finish_operation(interaction, operation_id, 'completed')
+
+    bot.tree.add_command(operations)
 
     @bot.tree.command(name="promotion", description="Give a member a rank; optionally remove their previous rank")
     @app_commands.guild_only()
@@ -297,6 +481,8 @@ def install_commands(bot):
         embed = discord.Embed(title="FBI UIU | Promotion", description=f"**{discord.utils.escape_markdown(target.display_name)}** has been promoted to **{discord.utils.escape_markdown(role.name)}**.", color=GOLD)
         embed.add_field(name="Reason", value=reason, inline=False)
         embed.set_footer(text=f"Approved by {actor.display_name}")
+        result = await bot.announce(interaction, 'promotion_channel', embed)
+        await interaction.followup.send(result, ephemeral=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="stats", description="See UIU member and case counts")
@@ -318,7 +504,11 @@ def install_commands(bot):
             "`/case open` — create a case\n`/case close` — close with a resolution\n"
             "`/case reopen` — reopen a case\n`/case view` — read a case\n"
             "`/case list` — browse cases\n`/stats` — community counts\n\n"
-            "Cases require Manage Server or the configured staff role. Promotions require Manage Roles. Responses are private to you.", ephemeral=True)
+            "`/case assign` / `/case unassign` — manage case agents\n"
+            "`/operation schedule` / `list` / `view` / `cancel` / `complete` — operation planning\n"
+            "`/setup channels` — choose announcement channels (Manage Server required)\n\n"
+            "Cases and operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
+            "Promotion and operation announcements go to the configured channels; case details stay private.", ephemeral=True)
 
 
 def main():
@@ -329,6 +519,7 @@ def main():
         raise SystemExit("Set DISCORD_TOKEN and GUILD_ID in the hosting Environment settings, then restart.")
     data_dir = Path(os.getenv("DATA_DIR") or Path(__file__).resolve().parent / "data")
     records = Records(data_dir / "uiu.sqlite3")
+    records.seed_archives()
     bot = UIUBot(int(guild_id), records)
     install_commands(bot)
     try:
