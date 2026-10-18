@@ -8,6 +8,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import discord
 from discord import app_commands
@@ -58,7 +59,73 @@ class Records:
                 briefing TEXT NOT NULL, game TEXT NOT NULL, starts_at TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'scheduled', created_by TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS case_notes(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER NOT NULL,
+                author TEXT NOT NULL, body TEXT NOT NULL, evidence_url TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS signups(
+                operation_id INTEGER NOT NULL, member_id TEXT NOT NULL, joined_at TEXT NOT NULL,
+                PRIMARY KEY(operation_id,member_id)
+            );
         """)
+
+    def add_note(self, case_id, author, body, evidence_url=''):
+        case = self.get(case_id)
+        if case is None or case['status'] != 'open':
+            raise ValueError('Choose an existing open case. Reopen closed cases before adding notes.')
+        body, evidence_url = body.strip(), evidence_url.strip()
+        if not body or len(body) > 1000 or len(evidence_url) > 500:
+            raise ValueError('Use a note of 1–1000 characters and an evidence link of at most 500 characters.')
+        if evidence_url:
+            try:
+                url = urlsplit(evidence_url)
+                valid = url.scheme == 'https' and url.hostname and not url.username and not url.password
+            except ValueError:
+                valid = False
+            if not valid or any(c.isspace() for c in evidence_url):
+                raise ValueError('Evidence must be a valid HTTPS link without spaces or embedded login details.')
+        with self.db:
+            cur = self.db.execute('INSERT INTO case_notes(case_id,author,body,evidence_url,created_at) VALUES(?,?,?,?,?)',
+                (case_id, str(author), body, evidence_url, now()))
+            self.audit(author, 'case.note', str(cur.lastrowid))
+        return cur.lastrowid
+
+    def notes(self, case_id, page):
+        if self.get(case_id) is None:
+            raise ValueError('That case ID does not exist.')
+        return self.db.execute('SELECT * FROM case_notes WHERE case_id=? ORDER BY id DESC LIMIT 3 OFFSET ?',
+                               (case_id, (page-1)*3)).fetchall()
+
+    def signup(self, operation_id, member_id, join):
+        row = self.operation(operation_id)
+        if row is None or row['status'] != 'scheduled':
+            raise ValueError('Sign-ups are closed for this operation.')
+        if datetime.fromisoformat(row['starts_at']) <= datetime.now(timezone.utc):
+            raise ValueError('This operation has started; its sign-up roster is locked.')
+        with self.db:
+            if join:
+                cur = self.db.execute('INSERT OR IGNORE INTO signups VALUES(?,?,?)', (operation_id, str(member_id), now()))
+                message = 'You joined the operation.' if cur.rowcount else 'You are already signed up.'
+            else:
+                cur = self.db.execute('DELETE FROM signups WHERE operation_id=? AND member_id=?', (operation_id, str(member_id)))
+                message = 'You left the operation.' if cur.rowcount else 'You were not signed up.'
+            if cur.rowcount:
+                self.audit(member_id, 'operation.join' if join else 'operation.leave', str(operation_id))
+        return message
+
+    def my_cases(self, member_id, page=1):
+        return self.db.execute('SELECT c.* FROM cases c JOIN assignments a ON a.case_id=c.id WHERE a.member_id=? ORDER BY c.id DESC LIMIT 10 OFFSET ?',
+                               (str(member_id), (page-1)*10)).fetchall()
+
+    def profile(self, member_id):
+        counts = {'open': 0, 'closed': 0, 'scheduled_operations': 0, 'completed_operations': 0}
+        for row in self.db.execute('SELECT c.status,COUNT(*) n FROM cases c JOIN assignments a ON a.case_id=c.id WHERE a.member_id=? GROUP BY c.status', (str(member_id),)):
+            counts[row['status']] = row['n']
+        for row in self.db.execute('SELECT o.status,COUNT(*) n FROM operations o JOIN signups s ON s.operation_id=o.id WHERE s.member_id=? GROUP BY o.status', (str(member_id),)):
+            if row['status'] in ('scheduled', 'completed'):
+                counts[row['status'] + '_operations'] = row['n']
+        return counts
 
     def setting(self, key, value=None):
         if value is not None:
@@ -198,6 +265,35 @@ def promotion_problem(actor, target, role, previous_role, me, owner_id):
     return None
 
 
+class OperationSignup(discord.ui.View):
+    def __init__(self, bot, operation_id):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.operation_id = operation_id
+        for joining, label, style in [(True, 'Join operation', discord.ButtonStyle.success),
+                                       (False, 'Leave operation', discord.ButtonStyle.secondary)]:
+            button = discord.ui.Button(label=label, style=style, custom_id=f'uiu:operation:{operation_id}:{"join" if joining else "leave"}')
+            async def callback(interaction, join=joining):
+                if interaction.guild_id != self.bot.guild_id or interaction.user.bot:
+                    await interaction.response.send_message('Use these buttons in the configured UIU server.', ephemeral=True)
+                    return
+                try:
+                    message = self.bot.records.signup(self.operation_id, interaction.user.id, join)
+                except ValueError as exc:
+                    message = str(exc)
+                await interaction.response.send_message(message, ephemeral=True)
+            button.callback = callback
+            self.add_item(button)
+
+    async def on_error(self, interaction, error, item):
+        LOG.error('Sign-up failed: %s', type(error).__name__)
+        message = 'Unable to update your sign-up. Try again or ask staff to check the roster.'
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+
+
 class UIUTree(app_commands.CommandTree):
     async def interaction_check(self, interaction):
         if interaction.guild_id != self.client.guild_id:
@@ -232,6 +328,9 @@ class UIUBot(discord.Client):
         self.promotion_lock = asyncio.Lock()
 
     async def setup_hook(self):
+        # Restore callbacks for old announcement buttons, including closed operations.
+        for row in self.records.db.execute('SELECT id FROM operations'):
+            self.add_view(OperationSignup(self, row['id']))
         self.tree.copy_global_to(guild=discord.Object(id=self.guild_id))
         await self.tree.sync(guild=discord.Object(id=self.guild_id))
         port = int(os.getenv("PORT") or os.getenv("SERVER_PORT") or "8080")
@@ -277,7 +376,7 @@ class UIUBot(discord.Client):
     async def health_route(self, request):
         return web.json_response({"ready": self.is_ready()}, status=200 if self.is_ready() else 503)
 
-    async def announce(self, interaction, key, embed):
+    async def announce(self, interaction, key, embed, view=None):
         channel_id = self.records.setting(key)
         if not channel_id or channel_id == '0':
             return 'No announcement channel configured; use /setup channels.'
@@ -288,7 +387,7 @@ class UIUBot(discord.Client):
                     or not channel.permissions_for(actor).view_channel
                     or not channel.permissions_for(actor).send_messages):
                 return 'Saved, but you cannot announce in the configured channel.'
-            await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
             return 'Announcement posted.'
         except discord.HTTPException:
             return 'Saved, but the announcement failed. Check channel permissions; do not repeat the action.'
@@ -363,6 +462,49 @@ def install_commands(bot):
 
     bot.tree.add_command(cases)
 
+    @cases.command(name='note', description='Add a staff-only case note and optional evidence link')
+    @app_commands.check(staff_check)
+    async def case_note(interaction: discord.Interaction, case_id: app_commands.Range[int, 1],
+                        text: app_commands.Range[str, 1, 1000], evidence_url: app_commands.Range[str, 1, 500] | None = None):
+        note_id = bot.records.add_note(case_id, interaction.user.id, text, evidence_url or '')
+        await interaction.response.send_message(f'Note #{note_id} saved to case #{case_id}.', ephemeral=True)
+
+    @cases.command(name='notes', description='Read staff-only notes and evidence, three per page')
+    @app_commands.check(staff_check)
+    async def case_notes(interaction: discord.Interaction, case_id: app_commands.Range[int, 1], page: app_commands.Range[int, 1, 100000] = 1):
+        rows = bot.records.notes(case_id, page)
+        embed = discord.Embed(title=f'Case #{case_id} | Notes | Page {page}', color=GOLD)
+        for row in rows:
+            embed.add_field(name=f"Note #{row['id']} | {row['created_at'][:10]}", value=row['body'], inline=False)
+            embed.add_field(name='Author', value=f"<@{row['author']}>")
+            if row['evidence_url']:
+                embed.add_field(name='Evidence link', value=row['evidence_url'], inline=False)
+        if not rows:
+            embed.description = 'No notes on this page.'
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @bot.tree.command(name='mycases', description='Privately see cases assigned to you')
+    @app_commands.guild_only()
+    async def mycases(interaction: discord.Interaction, page: app_commands.Range[int, 1, 100000] = 1):
+        rows = bot.records.my_cases(interaction.user.id, page)
+        text = '\n'.join(f"**#{r['id']}** {discord.utils.escape_markdown(r['title'])} — {r['status'].upper()}" for r in rows)
+        await interaction.response.send_message(text or 'No assigned cases on this page.', ephemeral=True)
+
+    @bot.tree.command(name='profile', description='See your agent summary; staff may look up another member')
+    @app_commands.guild_only()
+    async def profile(interaction: discord.Interaction, member: discord.Member | None = None):
+        target = member or interaction.user
+        if target.id != interaction.user.id:
+            await staff_check(interaction)
+        data = bot.records.profile(target.id)
+        embed = discord.Embed(title=f'Agent profile | {target.display_name}', color=GOLD)
+        embed.add_field(name='Assigned open cases', value=str(data['open']))
+        embed.add_field(name='Assigned closed cases', value=str(data['closed']))
+        embed.add_field(name='Scheduled operation sign-ups', value=str(data['scheduled_operations']))
+        embed.add_field(name='Completed operation sign-ups', value=str(data['completed_operations']))
+        embed.set_footer(text='Sign-up history is not verified attendance. Case counts reflect current assignments.')
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @cases.command(name='assign', description='Assign a lead agent to an open case')
     @app_commands.check(staff_check)
     async def case_assign(interaction: discord.Interaction, case_id: app_commands.Range[int, 1], member: discord.Member):
@@ -410,7 +552,7 @@ def install_commands(bot):
                                  game: str, starts_at: str, briefing: app_commands.Range[str, 1, 2000]):
         await interaction.response.defer(ephemeral=True)
         operation_id = bot.records.schedule(title, briefing, game, starts_at, interaction.user.id)
-        result = await bot.announce(interaction, 'operation_channel', operation_embed(bot.records.operation(operation_id)))
+        result = await bot.announce(interaction, 'operation_channel', operation_embed(bot.records.operation(operation_id)), OperationSignup(bot, operation_id))
         await interaction.followup.send(f'Operation #{operation_id} scheduled. {result}', ephemeral=True)
 
     @operations.command(name='view', description='Read an operation briefing')
@@ -418,7 +560,17 @@ def install_commands(bot):
         row = bot.records.operation(operation_id)
         if row is None:
             raise ValueError('That operation ID does not exist.')
-        await interaction.response.send_message(embed=operation_embed(row), ephemeral=True)
+        view = OperationSignup(bot, operation_id) if row['status'] == 'scheduled' else None
+        await interaction.response.send_message(embed=operation_embed(row), view=view, ephemeral=True)
+
+    @operations.command(name='roster', description='Staff: view operation sign-ups, twenty per page')
+    @app_commands.check(staff_check)
+    async def operation_roster(interaction: discord.Interaction, operation_id: app_commands.Range[int, 1], page: app_commands.Range[int, 1, 100000] = 1):
+        if bot.records.operation(operation_id) is None:
+            raise ValueError('That operation ID does not exist.')
+        rows = bot.records.db.execute('SELECT member_id FROM signups WHERE operation_id=? ORDER BY joined_at LIMIT 20 OFFSET ?', (operation_id, (page-1)*20)).fetchall()
+        text = '\n'.join(f"<@{r['member_id']}>" for r in rows)
+        await interaction.response.send_message(f'**Operation #{operation_id} roster | Page {page}**\n' + (text or 'No sign-ups on this page.'), ephemeral=True)
 
     @operations.command(name='list', description='List scheduled operations, ten per page')
     async def operation_list(interaction: discord.Interaction, page: app_commands.Range[int, 1, 100000] = 1):
@@ -507,6 +659,9 @@ def install_commands(bot):
             "`/case assign` / `/case unassign` — manage case agents\n"
             "`/operation schedule` / `list` / `view` / `cancel` / `complete` — operation planning\n"
             "`/setup channels` — choose announcement channels (Manage Server required)\n\n"
+            "`/case note` / `/case notes` — staff-only notes and evidence links\n"
+            "`/mycases` / `/profile` — your assignments and agent summary\n"
+            "Operation Join/Leave buttons manage your sign-up. `/operation roster` is staff-only.\n\n"
             "Cases and operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
             "Promotion and operation announcements go to the configured channels; case details stay private.", ephemeral=True)
 
