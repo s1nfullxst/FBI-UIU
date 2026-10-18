@@ -44,6 +44,16 @@ Operations persist in SQLite and have numeric IDs. Scheduling posts a briefing n
 
 ## Updating an existing deployment
 
+### Attendance and backups
+
+- `/operation attendance operation_id member present`: staff record or correct attendance after the scheduled start. `present:True` means attended; `False` means absent. Members do not need to have signed up. Cancelled operations cannot receive attendance records.
+- `/operation attendance_list operation_id [page]`: private staff view of confirmed records. Members with no record are unconfirmed, not automatically absent.
+- `/profile` shows **Verified completed operations**, counting each operation once only when staff mark the member present AND the operation is completed. Correcting attendance updates this count. Sign-up totals remain separately labelled.
+- `/backup`: requires Manage Server, even if STAFF_ROLE_ID is configured. Privately sends a consistent SQLite snapshot containing cases, notes, assignments, operations, sign-ups, attendance, channel settings and audit history. It does not contain environment variables or the Discord token. Keep this file private and download it before the attachment expires. Limited to one request per minute per server.
+- To restore: stop the hosted bot, keep a copy of its current database, upload the backup as `data/uiu.sqlite3` (or your configured DATA_DIR), then restart. Do not restore into a running bot. If the database exceeds Discord's attachment limit, download it from the host while stopped.
+
+Website sync code is ready in the site root: `stats.js` reads `stats-config.json`. Set its `endpoint` to the host's public HTTPS `/stats` address. No token belongs in either file. It refreshes every minute, checks freshness and shows unavailable/stale labels on failures. Until a URL is configured, the website shows only a dated snapshot of the two confirmed closed archive cases. This does not claim to count new cases created in the running bot. Public HTTPS hosting configuration and an end-to-end connection check are still required.
+
 ### Case notes, sign-ups and agent summaries
 
 - `/case note case_id text [evidence_url]`: staff can add a note and an optional HTTPS evidence link to an open case. Links are stored, not fetched or downloaded. Keep the linked file's sharing permissions appropriate; this bot does not manage external file access.
