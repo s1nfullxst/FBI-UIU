@@ -78,7 +78,7 @@ class BotTests(unittest.TestCase):
         bot = UIUBot(123, self.records)
         install_commands(bot)
         commands = {cmd.name: cmd for cmd in bot.tree.get_commands()}
-        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile', 'backup', 'privacy', 'dossier', 'training', 'commendation'})
+        self.assertEqual(set(commands), {'case', 'promotion', 'stats', 'help', 'setup', 'operation', 'mycases', 'profile', 'backup', 'privacy', 'dossier', 'training', 'commendation', 'announcement'})
         self.assertEqual({c.name for c in commands['case'].commands}, {'open', 'close', 'reopen', 'view', 'list', 'assign', 'unassign', 'note', 'notes'})
         for cmd in commands.values():
             cmd.to_dict(bot.tree)  # Validate Discord command schemas, including option types.
@@ -205,6 +205,32 @@ class BotTests(unittest.TestCase):
             else:
                 self.assertLessEqual(len(call.kwargs['embed'].description),4096)
         asyncio.run(run())
+
+    def test_announcements_public_projection_removal_and_privacy(self):
+        uid, other = 123456789012345678, 223456789012345678
+        first = self.records.publish_announcement('Welcome', 'Read the new member guide.', uid)
+        self.assertEqual(self.records.publish_announcement('Welcome', 'Read the new member guide.', uid), first)
+        for i in range(6):
+            self.records.publish_announcement(f'Update {i}', 'Public text', other)
+        self.records.db.close()
+        self.records = Records(self.path)
+        bot = UIUBot(123,self.records)
+        install_commands(bot)
+        for command in bot.tree.get_command('announcement').commands:
+            self.assertIn(staff_check, command.checks)
+        data=bot.stats()['announcements']
+        self.assertEqual(len(data),5)
+        self.assertEqual(data[0]['title'],'Update 5')
+        self.assertEqual(set(data[0]),{'id','title','body','published_at'})
+        self.assertNotIn(str(other),str(data))
+        self.records.remove_announcement(data[0]['id'],other)
+        self.assertNotEqual(bot.stats()['announcements'][0]['id'],data[0]['id'])
+        self.records.erase_user(uid)
+        self.assertIsNone(self.records.db.execute('SELECT id FROM announcements WHERE id=?',(first,)).fetchone())
+        with self.assertRaises(ValueError):
+            self.records.publish_announcement('  ', 'Body',other)
+        with self.assertRaises(ValueError):
+            self.records.remove_announcement(9999,other)
 
     def test_staff_permission_denial(self):
         async def fetch_member(user_id):
