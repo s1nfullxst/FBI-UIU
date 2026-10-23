@@ -1,0 +1,25 @@
+{
+  "recruitment": [
+    {
+      "department": "Tactical Pilots",
+      "status": "unconfirmed",
+      "note": "Ask the department lead in Discord about current openings and requirements."
+    },
+    {
+      "department": "TOD",
+      "status": "unconfirmed",
+      "note": "Ask the department lead in Discord about current openings and requirements."
+    },
+    {
+      "department": "Mobile Occult Operations Team",
+      "status": "unconfirmed",
+      "note": "Ask the department lead in Discord about current openings and requirements."
+    },
+    {
+      "department": "Financial",
+      "status": "unconfirmed",
+      "note": "Ask the department lead in Discord about current openings and requirements."
+    }
+  ],
+  "gallery": []
+}
