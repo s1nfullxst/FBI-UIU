@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from bot import Records, UIUBot, install_commands, promotion_problem, staff_check, operation_time, OperationSignup
+from bot import Records, UIUBot, install_commands, promotion_problem, case_check, case_manager_role_id, staff_check, operation_time, OperationSignup
 from discord import app_commands
 
 
@@ -304,7 +304,7 @@ class BotTests(unittest.TestCase):
         bot = UIUBot(123, self.records)
         install_commands(bot)
         for name in ('note', 'notes'):
-            self.assertIn(staff_check, bot.tree.get_command('case').get_command(name).checks)
+            self.assertIn(case_check, bot.tree.get_command('case').get_command(name).checks)
         self.assertNotIn('Private note', str(bot.stats()))
         self.records.transition(case_id, 'closed', 'Done', 1)
         with self.assertRaises(ValueError):
@@ -417,6 +417,56 @@ class BotTests(unittest.TestCase):
                     result.close()
         self.assertTrue(denied)
 
+
+class RoleSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_case_role_is_scoped_and_revocation_is_checked(self):
+        from unittest.mock import AsyncMock
+        member = SimpleNamespace(roles=[SimpleNamespace(id=case_manager_role_id())],
+                                 guild_permissions=SimpleNamespace(manage_guild=False))
+        interaction = SimpleNamespace(guild=SimpleNamespace(id=123,fetch_member=AsyncMock(return_value=member)),
+                                      client=SimpleNamespace(guild_id=123), user=SimpleNamespace(id=5))
+        self.assertTrue(await case_check(interaction))
+        with self.assertRaises(app_commands.CheckFailure):
+            await staff_check(interaction)
+        member.roles = []
+        with self.assertRaises(app_commands.CheckFailure):
+            await case_check(interaction)
+        member.guild_permissions.manage_guild = True
+        self.assertTrue(await case_check(interaction))
+        interaction.guild.id = 999
+        with self.assertRaises(app_commands.CheckFailure):
+            await case_check(interaction)
+
+    async def test_complete_count_roster_and_failure(self):
+        from unittest.mock import AsyncMock
+        import discord
+        bot = UIUBot(123, None)
+        bot._connection.user = SimpleNamespace(id=7)
+        members = [
+            SimpleNamespace(id=1,bot=False,display_name='<Agent>',roles=[SimpleNamespace(id=case_manager_role_id())]),
+            SimpleNamespace(id=2,bot=False,display_name='Member',roles=[]),
+            SimpleNamespace(id=7,bot=True,display_name='UIU',roles=[]),
+            SimpleNamespace(id=8,bot=True,display_name='Other bot',roles=[SimpleNamespace(id=case_manager_role_id())])]
+        async def all_members(**kwargs):
+            self.assertIsNone(kwargs['limit'])
+            for member in members: yield member
+        guild = SimpleNamespace(fetch_members=all_members)
+        bot.fetch_guild = AsyncMock(return_value=guild)
+        await bot.refresh_members()
+        self.assertEqual(bot.member_count,3)
+        self.assertEqual(bot.case_managers,[{'display_name':'<Agent>'}])
+        self.assertIsNotNone(bot.member_updated_at)
+        members[0].roles = []
+        await bot.refresh_members()
+        self.assertEqual(bot.case_managers,[])
+        async def failed(**kwargs):
+            yield members[0]
+            raise discord.ClientException('failed')
+        guild.fetch_members = failed
+        await bot.refresh_members()
+        self.assertIsNone(bot.member_count)
+        self.assertIsNone(bot.case_managers)
+        self.assertIsNone(bot.member_updated_at)
 
 if __name__ == '__main__':
     unittest.main()
