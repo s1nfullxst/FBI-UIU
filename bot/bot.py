@@ -604,7 +604,9 @@ class UIUBot(discord.Client):
             "SELECT id,title,game,starts_at FROM operations WHERE status='scheduled' AND julianday(starts_at)>=julianday(?) ORDER BY julianday(starts_at),id LIMIT 12", (now(),))]
         completed = db.execute("SELECT COUNT(*) FROM operations WHERE status='completed'").fetchone()[0]
         attendance = db.execute("SELECT COUNT(*) FROM attendance a JOIN operations o ON o.id=a.operation_id WHERE a.present=1 AND o.status='completed'").fetchone()[0]
-        return {"upcoming_operations": upcoming, "completed_operations": completed,
+        return {"upcoming_training": [dict(row) for row in db.execute(
+                    "SELECT id,title,starts_at FROM training_sessions WHERE status='scheduled' AND julianday(starts_at)>=julianday(?) ORDER BY julianday(starts_at),id LIMIT 12", (now(),))],
+                "upcoming_operations": upcoming, "completed_operations": completed,
                 "verified_attendances": attendance}
 
     def stats(self):
@@ -679,7 +681,8 @@ async def staff_check(interaction):
 def install_training_sessions(bot):
     group = bot.tree.get_command('training')
 
-    @group.command(name='schedule', description='Staff: schedule a training session')
+    @group.command(name='schedule', description='Staff: schedule training with a publicly visible title and time')
+    @app_commands.describe(title='Public website title; do not include private information', starts_at='Future time including UTC offset, e.g. 2026-11-01T19:00+01:00')
     @app_commands.check(staff_check)
     async def schedule(interaction: discord.Interaction, title: app_commands.Range[str,1,80], starts_at: str):
         session_id = bot.records.schedule_training(title, starts_at, interaction.user.id)
