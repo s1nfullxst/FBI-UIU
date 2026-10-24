@@ -150,3 +150,18 @@ The website includes an Updates section and a Start here guide. It polls once a 
 Enable Server Members Intent under your application's Bot settings in the Discord Developer Portal. Verified applications may need Discord approval. Replace bot.py in Wispbyte, keep the data folder and environment settings, and restart. The existing dependencies are unchanged.
 
 CASE_MANAGER_ROLE_ID defaults to 1562783587198042272. This role grants only /case commands, not other staff commands. The public website lists human role holders by display name only. Every five minutes a complete member list is fetched: people plus this bot are counted, all other bots excluded. Failed fetches publish unavailable values instead of partial counts. The website refreshes every minute.
+
+## Training sessions
+
+- /training schedule title starts_at: staff schedule training; time must be in the future and include an offset, e.g. 2026-11-01T19:00+01:00.
+- /training sessions [page]: members browse sessions and their status.
+- /training join session_id and /training leave session_id: members manage their own sign-up before the start.
+- /training roster session_id [page]: staff privately view sign-ups and results.
+- /training result session_id member passed: staff record/correct a signed-up member's pass/fail after the session starts; no self-assessment. Unassessed members are not automatically failed.
+- /training results [member] [page]: own results; viewing another member requires staff.
+- /training complete session_id: staff finish a session after it starts; results can still be corrected.
+- /training cancel session_id: cancel a scheduled session without recorded results.
+
+Staff means Manage Server or STAFF_ROLE_ID; Case Manager alone does not grant training management. Results do not automatically award qualifications: /training award, revoke and list remain unchanged. Commands reply privately; no automatic announcements or reminders are sent. Members find sessions through /training sessions. No training names or results are exposed on the website API.
+
+Replace only bot.py and restart to sync commands. Existing data is preserved; new tables are created automatically and included in /backup. Privacy erasure covers training sign-ups, results, assessors and session authors. Keep data/uiu.sqlite3 and Environment settings.
