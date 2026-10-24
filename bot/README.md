@@ -9,11 +9,11 @@ Python 3.11 or newer. All bot logic is in `bot.py`.
 3. Add Environment variables:
    - `DISCORD_TOKEN`: your bot token, entered privately in the host.
    - `GUILD_ID`: FBI UIU Discord server ID.
-   - `STAFF_ROLE_ID`: optional role ID allowed to use case commands. Without this, Manage Server is required.
+   - `STAFF_ROLE_ID`: optional role ID allowed to use case commands. Case Managers also have case access.
    - `PORT`: HTTP listening port configured for the hosting service (default 8080; SERVER_PORT is also supported).
    - `DATA_DIR`: optional persistent data folder; defaults to `data` beside bot.py.
 4. Create a Discord application at https://discord.com/developers/applications and use its Bot token. Install it into your server with the `bot` and `applications.commands` scopes. Give it View Channels, Send Messages, Embed Links and Manage Roles. Administrator permission is not needed.
-5. Put the bot's role above the ranks it should assign and above the members it should manage. Privileged member and message content intents are not required.
+5. Put the bot's role above the ranks it should assign and above the members it should manage. Enable Server Members Intent in the Discord Developer Portal before starting this version. Message Content Intent is not needed.
 6. Start it. Requirements are installed from requirements.txt. Commands are synced to GUILD_ID.
 
 Never paste tokens into bot.py, screenshots, chat or GitHub.
@@ -29,7 +29,7 @@ Never paste tokens into bot.py, screenshots, chat or GitHub.
 - `/stats`: displays member and case counts.
 - `/help`: lists commands and permissions.
 
-Cases require Manage Server or STAFF_ROLE_ID. On the first start of this update, Missouri UIU File #3 and Wyoming UIU File #1 are imported as CLOSED, as confirmed by management. These are short records linking to the existing website reports, not copies of all PDF text. Recognized existing records are preserved, including their current statuses; no case is reset on later restarts. Database IDs are assigned automatically and may differ from the original PDF file numbers. Use `/case list status:closed` to find them.
+Cases require the Case Manager role, Manage Server or STAFF_ROLE_ID. On the first start of this update, Missouri UIU File #3 and Wyoming UIU File #1 are imported as CLOSED, as confirmed by management. These are short records linking to the existing website reports, not copies of all PDF text. Recognized existing records are preserved, including their current statuses; no case is reset on later restarts. Database IDs are assigned automatically and may differ from the original PDF file numbers. Use `/case list status:closed` to find them.
 
 ## New commands
 
@@ -64,7 +64,7 @@ Website sync code is ready in the site root: `stats.js` reads `stats-config.json
 - `/mycases [page]`: any member can privately see the IDs, titles and statuses of cases currently assigned to them. This grants no access to staff-only notes, evidence or other agents' cases.
 - `/profile [member]`: your own private summary of assigned open/closed cases and operation sign-ups. Only staff can inspect another member's profile. Completed operation counts mean sign-ups for completed operations, not verified attendance. Cancelled operations are excluded.
 
-These features use additional tables in the existing SQLite file. They require no new packages or privileged Discord intents. Case notes, evidence links, agent summaries and sign-up rosters are never exposed by the public `/stats` endpoint.
+These features use additional tables in the existing SQLite file. They require no new packages. Case notes, evidence links, agent summaries and sign-up rosters are never exposed by the public `/stats` endpoint.
 
 Stop the bot and back up `data/uiu.sqlite3`. Replace only `bot.py`, retain your Environment settings and data folder, then restart. Dependencies are unchanged. New tables are created alongside existing records. Run `/setup channels` once after restarting.
 
@@ -144,3 +144,9 @@ Staff cannot award themselves or bot accounts. Active titles are unique per memb
 All commands require Manage Server or STAFF_ROLE_ID. Publishing does not send a Discord announcement or ping. The public /stats feed includes only the latest five announcements, without publisher IDs. Records persist across restarts and are included in backups. Privacy erasure removes posts authored by the subject and exact ID references in other posts; manually review names and external copies.
 
 The website includes an Updates section and a Start here guide. It polls once a minute, distinguishes an empty feed from unavailable data, and marks cached announcements as stale after a connection failure. Install this bot.py update and restart to enable the new feed; no new settings or dependencies.
+
+## Member counting and Case Managers (24 October 2026)
+
+Enable Server Members Intent under your application's Bot settings in the Discord Developer Portal. Verified applications may need Discord approval. Replace bot.py in Wispbyte, keep the data folder and environment settings, and restart. The existing dependencies are unchanged.
+
+CASE_MANAGER_ROLE_ID defaults to 1562783587198042272. This role grants only /case commands, not other staff commands. The public website lists human role holders by display name only. Every five minutes a complete member list is fetched: people plus this bot are counted, all other bots excluded. Failed fetches publish unavailable values instead of partial counts. The website refreshes every minute.
