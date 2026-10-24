@@ -1,3 +1,29 @@
+/* Case Manager roster uses public display names only. */
+(() => {
+'use strict';
+const main = document.querySelector('main'); if (!main) return;
+const section = document.createElement('section'); section.id = 'case-managers';
+const title = document.createElement('h2'); title.textContent = 'Case Managers.';
+const description = document.createElement('p'); description.textContent = 'Members of the Discord Case Manager team. They can open, assign, update and close cases through the UIU bot.';
+const status = document.createElement('p'); status.className = 'resource-note'; status.setAttribute('role','status');
+const list = document.createElement('ul'); list.className = 'resource-grid';
+section.append(title,description,status,list);
+const archive = document.getElementById('case-files');
+if (archive) archive.before(section); else main.append(section);
+function unavailable() { list.replaceChildren(); status.textContent = 'Case Manager roster unavailable. Waiting for the bot to sync.'; }
+unavailable();
+document.addEventListener('uiu-unavailable', unavailable);
+document.addEventListener('uiu-stats', event => {
+  const data = event.detail, age = Date.now() - Date.parse(data.members_updated_at);
+  if (!Number.isFinite(age) || age < -120000 || age >= 900000 ||
+      !Array.isArray(data.case_managers) || !data.case_managers.every(m => m && typeof m.display_name === 'string')) { unavailable(); return; }
+  list.replaceChildren();
+  for (const member of data.case_managers) {
+    const item = document.createElement('li'); item.className = 'resource-card'; item.textContent = member.display_name; list.append(item);
+  }
+  status.textContent = data.case_managers.length ? 'Synced from Discord. Role changes appear within about six minutes.' : 'No members currently have the Case Manager role.';
+});
+})();
 
 /* Community resources: calendar, recruitment, timelines, gallery and commands. */
 (() => {
@@ -37,14 +63,14 @@ photos=data.gallery.slice(0,60).filter(p=>p&&typeof p.src==='string'&&typeof p.c
 }catch{recruitNote.textContent='Recruitment statuses unavailable. Ask leadership in Discord.';photoNote.textContent='Gallery unavailable. Please try again later.';}finally{clearTimeout(timer);}}content();
 document.querySelectorAll('.public-case').forEach(file=>{const parts=Array.from(file.querySelectorAll('.case-report-details'));if(!parts.length)return;const timeline=el('details'),list=el('ol',undefined,'report-timeline');timeline.append(el('summary','Case timeline — report sequence'),el('p','Events follow the published report’s order. Unknown dates are not assigned.'));
 for(const part of parts){const title=part.querySelector('summary')?.textContent?.trim();if(!title)continue;const li=el('li');li.append(el('strong',title));const text=part.querySelector('p')?.textContent?.trim();if(text)li.append(el('p',text.length>280?text.slice(0,277)+'…':text));list.append(li);}const end=el('li');end.append(el('strong','Archive status: closed'),el('p','Confirmed by management on 18 October 2026. This is a status confirmation, not the incident’s closure date.'));list.append(end);timeline.append(list);file.querySelector('.public-case-body')?.prepend(timeline);});
-const guide=section('command-guide','Find the right command.','Search by command or purpose. Staff means Manage Server or the configured staff role. Other members’ private records require staff access.',document.getElementById('join'));
+const guide=section('command-guide','Find the right command.','Search by command or purpose. Case commands also allow Case Managers. Staff means Manage Server or the configured staff role. Other members’ private records require staff access.',document.getElementById('join'));
 const searchTools=el('div',undefined,'resource-tools'),searchLabel=el('label','Search'),search=el('input');search.type='search';search.placeholder='Try case, attendance or training';searchLabel.append(search);const accessLabel=el('label','Access'),access=el('select');
-for(const value of ['All','Members','Staff','Manage Server','Manage Roles']){const o=el('option',value);o.value=value;access.append(o);}accessLabel.append(access);searchTools.append(searchLabel,accessLabel);const result=el('p',undefined,'resource-note');result.setAttribute('role','status');const list=el('div');guide.append(searchTools,result,list);
+for(const value of ['All','Members','Staff','Case Managers / Staff','Manage Server','Manage Roles']){const o=el('option',value);o.value=value;access.append(o);}accessLabel.append(access);searchTools.append(searchLabel,accessLabel);const result=el('p',undefined,'resource-note');result.setAttribute('role','status');const list=el('div');guide.append(searchTools,result,list);
 const commands=[],add=(group,permission,items)=>items.forEach(([name,description])=>commands.push({name:'/'+(group?group+' ':'')+name,description,permission}));
 add('','Members',[['profile','View your profile and activity.'],['mycases','List cases assigned to you.'],['stats','Show member and case counts.'],['help','Show bot help.']]);
 add('dossier','Members',[['view','View your dossier; staff may select another member.']]);add('dossier','Staff',[['set','Set a member’s department and callsign.']]);
 for(const group of ['training','commendation']){add(group,'Members',[['list','View your active and revoked records; staff may view others.']]);add(group,'Staff',[['award','Award another member a qualification or recognition. No self-awards.'],['revoke','Revoke a record by ID with a reason.']]);}
-add('case','Staff',[['open','Create a case.'],['close','Close a case with its resolution.'],['reopen','Reopen a case with a reason.'],['view','Read a case privately.'],['list','List cases by status.'],['assign','Assign a lead agent to an open case.'],['unassign','Remove the lead agent from an open case.'],['note','Add a note and optional evidence URL.'],['notes','Read saved case notes.']]);
+add('case','Case Managers / Staff',[['open','Create a case.'],['close','Close a case with its resolution.'],['reopen','Reopen a case with a reason.'],['view','Read a case privately.'],['list','List cases by status.'],['assign','Assign a lead agent to an open case.'],['unassign','Remove the lead agent from an open case.'],['note','Add a note and optional evidence URL.'],['notes','Read saved case notes.']]);
 add('operation','Members',[['list','List scheduled operations.'],['view','Read a briefing and join or leave before its start.']]);add('operation','Staff',[['schedule','Schedule an operation with game, briefing and a future time including UTC offset.'],['roster','View signed-up members.'],['attendance','Mark someone present or absent after the scheduled start.'],['attendance_list','View recorded attendance.'],['complete','Mark an operation completed.'],['cancel','Cancel an operation.']]);
 add('announcement','Staff',[['publish','Publish a title and message on the public website.'],['list','List announcement IDs.'],['remove','Remove a website announcement.']]);add('','Manage Roles',[['promotion','Give a new rank and optionally remove the old role; hierarchy applies.']]);add('setup','Manage Server',[['channels','Choose announcement channels.']]);add('','Manage Server',[['backup','Download a private database backup.']]);
 add('privacy','Members',[['policy','Open the policies.'],['request','Submit a data deletion request for review.']]);add('privacy','Manage Server',[['requests','List pending deletion requests.'],['erase','Permanently remove linked data after verification and explicit confirmation. External copies need separate review.']]);
@@ -235,14 +261,15 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
           !(data.members === null || validCount(data.members))) throw new Error('Stale or invalid stats');
       for (const key of ['open_cases', 'closed_cases']) fields[key].textContent = data[key].toLocaleString();
       const memberAge = Date.now() - Date.parse(data.members_updated_at);
-      const membersFresh = data.members !== null && Number.isFinite(memberAge) && memberAge >= -120000 && memberAge < 900000;
+      const membersFresh = data.members_scope === 'humans_and_uiu_bot' && data.members !== null && Number.isFinite(memberAge) && memberAge >= -120000 && memberAge < 900000;
       fields.members.textContent = membersFresh ? data.members.toLocaleString() : '—';
-      fields.members.setAttribute('aria-label', membersFresh ? 'Approximate server member count, including bots' : 'Member count unavailable');
+      fields.members.setAttribute('aria-label', membersFresh ? 'Server members: people plus the UIU bot' : 'Member count unavailable');
       lastSync = new Date();
       document.dispatchEvent(new CustomEvent('uiu-stats', {detail: data}));
-      note.textContent = 'Synced ' + lastSync.toLocaleTimeString() + '. ' + (membersFresh ? 'Members are approximate and include bots.' : 'Member count is temporarily unavailable.') + ' Refreshes every minute.';
+      note.textContent = 'Synced ' + lastSync.toLocaleTimeString() + '. ' + (membersFresh ? 'Members count people plus the UIU bot; other bots are excluded.' : 'Member count is temporarily unavailable.') + ' Refreshes every minute.';
     } catch (_) {
       document.dispatchEvent(new CustomEvent('uiu-unavailable'));
+      fields.members.textContent = '-';
       note.textContent = lastSync ? 'Live stats unavailable. Showing last update from ' + lastSync.toLocaleTimeString() + '.' : snapshot + ' Live stats unavailable.';
     } finally { busy = false; }
   }
