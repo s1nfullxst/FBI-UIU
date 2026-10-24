@@ -162,6 +162,8 @@ CASE_MANAGER_ROLE_ID defaults to 1562783587198042272. This role grants only /cas
 - /training complete session_id: staff finish a session after it starts; results can still be corrected.
 - /training cancel session_id: cancel a scheduled session without recorded results.
 
-Staff means Manage Server or STAFF_ROLE_ID; Case Manager alone does not grant training management. Results do not automatically award qualifications: /training award, revoke and list remain unchanged. Commands reply privately; no automatic announcements or reminders are sent. Members find sessions through /training sessions. No training names or results are exposed on the website API.
+Staff means Manage Server or STAFF_ROLE_ID; Case Manager alone does not grant training management. Results do not automatically award qualifications: /training award, revoke and list remain unchanged. Commands reply privately; no automatic announcements or reminders are sent. Members find sessions through /training sessions. The website API exposes upcoming training IDs, titles and start times. Use public-safe session titles. Sign-ups, pass/fail results and assessor IDs stay private.
 
 Replace only bot.py and restart to sync commands. Existing data is preserved; new tables are created automatically and included in /backup. Privacy erasure covers training sign-ups, results, assessors and session authors. Keep data/uiu.sqlite3 and Environment settings.
+
+The website's This week in UIU panel shows upcoming operations and training over the next seven days, plus recent announcements. Replace bot.py and restart to enable the training feed. The panel shows unavailable rather than an empty schedule when connected to an older bot version.
