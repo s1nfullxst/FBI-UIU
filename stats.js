@@ -1,3 +1,60 @@
+/* Weekly overview: public schedules and announcements only. */
+(() => {
+'use strict';
+const about=document.getElementById('about'); if(!about)return;
+const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
+const section=el('section');section.id='uiu-week';section.setAttribute('aria-labelledby','week-title');
+const heading=el('h2','This week in UIU.');heading.id='week-title';
+const status=el('p','Connecting to the unit feed.','resource-note');status.setAttribute('role','status');
+const grid=el('div',undefined,'week-grid');
+section.append(el('span','UIU / LIVE BRIEFING','mono'),heading,el('p','Operations and training over the next seven days, plus announcements from the past seven days. Times are local to you.'),status,grid);
+about.before(section);
+const style=el('style');style.textContent='.week-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}.week-column{border:1px solid var(--line);border-top:3px solid var(--gold);padding:24px;background:var(--panel);min-width:0}.week-column h3{font:25px Georgia,serif}.week-entry{padding:16px 0;border-bottom:1px solid var(--line)}.week-entry h4{font:18px Georgia,serif;margin:0 0 10px;overflow-wrap:anywhere}.week-entry p,.week-column>p{font-size:13px;overflow-wrap:anywhere}.week-entry time{font:12px monospace;color:var(--gold)}.week-column>a{display:inline-block;margin-top:20px;font-size:12px}.week-entry code{overflow-wrap:anywhere}@media(max-width:850px){.week-grid{grid-template-columns:1fr}}';document.head.append(style);
+const columns={};
+for(const [key,title,href,label] of [
+ ['ops','Operations','#operations','View Ops Board'],
+ ['training','Training','https://discord.gg/qmdEWAhBUy','Find training in Discord'],
+ ['news','Announcements','#announcements','Read all announcements']]){
+ const card=el('article',undefined,'week-column'),body=el('div'),link=el('a',label);link.href=href;card.append(el('h3',title),body,link);grid.append(card);columns[key]=body;
+}
+function message(key,text){columns[key].replaceChildren(el('p',text));}
+function unavailable(){status.textContent='Live briefing unavailable. Check Discord for the latest schedule.';for(const key of Object.keys(columns))message(key,'Waiting for a live update.');}
+unavailable();
+function schedule(key,rows,current,end){
+ if(!Array.isArray(rows)||rows.length>12||!rows.every(r=>r&&Number.isSafeInteger(r.id)&&r.id>0&&typeof r.title==='string'&&r.title.length<=100&&Number.isFinite(Date.parse(r.starts_at)))){message(key,'Schedule unavailable. Check Discord for sessions.');return false;}
+ const chosen=rows.filter(r=>Date.parse(r.starts_at)>=current&&Date.parse(r.starts_at)<end).sort((a,b)=>Date.parse(a.starts_at)-Date.parse(b.starts_at));
+ columns[key].replaceChildren();
+ if(!chosen.length)message(key,'No sessions scheduled in the next seven days.');
+ for(const row of chosen.slice(0,4)){
+  const item=el('div',undefined,'week-entry'),time=el('time',new Date(row.starts_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}));time.dateTime=row.starts_at;
+  item.append(el('h4',row.title),time,el('p',(key==='training'?'Training #':'Operation #')+row.id));
+  if(key==='training')item.append(el('code','/training join session_id:'+row.id));
+  else item.append(el('p','Read the briefing and join in Discord.'));
+  columns[key].append(item);
+ }
+ if(chosen.length>4)columns[key].append(el('p','Showing the next four sessions. Check Discord for more.'));
+ return true;
+}
+document.addEventListener('uiu-unavailable',unavailable);
+document.addEventListener('uiu-stats',event=>{
+ const data=event.detail,current=Date.now(),week=7*24*60*60*1000;
+ const generated=Date.parse(data.generated_at);
+ if(data.bot_online!==true||!Number.isFinite(generated)||Math.abs(current-generated)>120000){unavailable();return;}
+ const ops=schedule('ops',data.activity?.upcoming_operations,current,current+week);
+ const training=schedule('training',data.activity?.upcoming_training,current,current+week);
+ const rows=data.announcements;
+ let news=false;
+ if(!Array.isArray(rows)||rows.length>5||!rows.every(r=>r&&typeof r.title==='string'&&r.title.length<=100&&Number.isFinite(Date.parse(r.published_at))))message('news','Announcements unavailable.');
+ else{
+  news=true;
+  const recent=rows.filter(r=>Date.parse(r.published_at)>=current-week&&Date.parse(r.published_at)<=current).sort((a,b)=>Date.parse(b.published_at)-Date.parse(a.published_at));
+  columns.news.replaceChildren();
+  if(!recent.length)message('news','No announcements published in the past seven days.');
+  for(const row of recent.slice(0,3)){const item=el('div',undefined,'week-entry'),time=el('time',new Date(row.published_at).toLocaleDateString(undefined,{dateStyle:'medium'}));time.dateTime=row.published_at;item.append(el('h4',row.title),time);columns.news.append(item);}
+ }
+ status.textContent=(ops&&training&&news?'Updated ':'Partially synced ')+new Date().toLocaleTimeString()+'. Refreshes every minute.';
+});
+})();
 /* Case Manager roster uses public display names only. */
 (() => {
 'use strict';
@@ -51,10 +108,10 @@ prev.onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1);selec
 document.addEventListener('uiu-stats',event=>{const rows=event.detail.activity?.upcoming_operations;if(!Array.isArray(rows)||rows.length>12||!rows.every(r=>r&&typeof r.title==='string'&&r.title.length<=100&&['ERLC','BRM5','Both'].includes(r.game)&&Number.isFinite(Date.parse(r.starts_at)))){events=null;status.textContent='Schedule unavailable. Check Discord.';}else{events=rows;status.textContent='Updated '+new Date().toLocaleTimeString()+'. Select a day to filter.';}draw();});
 document.addEventListener('uiu-unavailable',()=>{status.textContent=events?'Connection unavailable. Sessions shown are from the last successful update.':'Schedule unavailable. Check Discord.';});draw();
 const recruitment=section('recruitment','Find your team.','Check published recruitment statuses, then contact leadership. Unconfirmed does not mean open.',document.getElementById('briefings')),recruitGrid=el('div',undefined,'resource-grid'),recruitNote=el('p','Loading statuses…','resource-note');recruitment.append(recruitGrid,recruitNote);
-const gallery=section('gallery','From the field.','Community screenshots from operations and training.',document.getElementById('questions')),galleryTools=el('div',undefined,'resource-tools'),photoLabel=el('label','Category'),photoFilter=el('select');
+const gallery=section('gallery','Operation photos.','Community screenshots from operations and training.',document.getElementById('questions')),galleryTools=el('div',undefined,'resource-tools'),photoLabel=el('label','Category'),photoFilter=el('select');
 for(const value of ['All','Operations','Training']){const o=el('option',value);o.value=value;photoFilter.append(o);}photoLabel.append(photoFilter);galleryTools.append(photoLabel);const galleryGrid=el('div',undefined,'resource-grid'),photoNote=el('p','Loading photographs…','resource-note');photoNote.setAttribute('role','status');gallery.append(galleryTools,photoNote,galleryGrid);
 const modal=el('dialog',undefined,'photo-dialog');modal.setAttribute('aria-label','Community photograph');const close=el('button','Close photograph','resource-button'),large=el('img'),caption=el('p');close.onclick=()=>modal.close();modal.append(close,large,caption);document.body.append(modal);let photos=[];
-function drawPhotos(){galleryGrid.replaceChildren();const shown=photos.filter(p=>photoFilter.value==='All'||p.category===photoFilter.value);photoNote.textContent=shown.length?shown.length+' photographs':photos.length?'No photos in this category.':'No photos published yet. Share an operation or training screenshot with staff for the gallery.';
+function drawPhotos(){galleryTools.hidden=photos.length===0;galleryGrid.replaceChildren();const shown=photos.filter(p=>photoFilter.value==='All'||p.category===photoFilter.value);photoNote.textContent=shown.length?shown.length+' photographs':photos.length?'No photos in this category.':'Photos coming soon';
 for(const p of shown){const card=el('figure',undefined,'resource-card'),button=el('button',undefined,'photo-button'),img=el('img',undefined,'gallery-image');img.src=p.url.href;img.alt=p.caption;img.loading='lazy';button.setAttribute('aria-label','Enlarge '+p.caption);button.append(img);button.onclick=()=>{large.src=p.url.href;large.alt=p.caption;caption.textContent=p.caption+(p.credit?' · '+p.credit:'');modal.showModal();};img.onerror=()=>{button.replaceChildren(el('p','Photo unavailable'));button.disabled=true;};card.append(button,el('figcaption',p.caption+(p.credit?' · '+p.credit:'')));galleryGrid.append(card);}}
 photoFilter.onchange=drawPhotos;
 async function content(){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);try{const response=await fetch('./community-content.json',{cache:'no-store',credentials:'omit',signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();if(!Array.isArray(data.recruitment)||!Array.isArray(data.gallery))throw Error();const labels={open:'Accepting members',closed:'Recruitment closed',unconfirmed:'Status unconfirmed'};
@@ -102,14 +159,15 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
   news.innerHTML = `<div class="section-head"><div><span class="mono">UIU / COMMUNITY UPDATES</span><h2 id="news-title">Latest announcements.</h2></div><p>Updates published by community staff. Check Discord for conversations and full session briefings.</p></div><p id="news-state" class="news-state" role="status">Checking for announcements…</p><div id="news-list" class="news-grid"></div>`;
   about.before(news);
   const guide = document.createElement('section'); guide.id = 'member-guide'; guide.setAttribute('aria-labelledby','guide-title');
-  guide.innerHTML = `<div class="section-head"><div><span class="mono">NEW TO THE UIU?</span><h2 id="guide-title">Your first steps.</h2></div><p>From joining the server to your first operation: start here, then follow the community’s current instructions in Discord.</p></div>
+  guide.innerHTML = `<div class="section-head"><div><span class="mono">NEW TO THE UIU?</span><h2 id="guide-title">Start here.</h2></div><p>From joining the server to your first operation: start here, then follow the community’s current instructions in Discord.</p></div>
     <ol class="member-steps"><li><h3>Meet the community.</h3><p>Join our Discord, read the rules and follow any verification instructions shown there. Ask staff if you need help getting access.</p><a href="https://discord.gg/qmdEWAhBUy" class="button" target="_blank" rel="noopener noreferrer">JOIN DISCORD &rarr;</a></li>
     <li><h3>Find your department.</h3><p>Explore the teams and their duties. Contact the relevant department lead in Discord about openings and requirements; a listing does not mean recruitment is open.</p><a href="#departments">EXPLORE DEPARTMENTS &rarr;</a></li>
-    <li><h3>Prepare your agent.</h3><p>Use <code>/dossier view</code> to check your profile. Staff can set your department and callsign, then record qualifications as you complete training.</p><p>Need a correction? Ask staff rather than creating a second record.</p></li>
+    <li><h3>Attend your first training.</h3><p>Use <code>/training sessions</code> in Discord to find a session, then <code>/training join</code> with its ID before it starts. Ask staff which training suits your department.</p><p>Check your results with <code>/training results</code>. Staff record qualifications separately.</p><a href="#uiu-week">SEE WHAT IS COMING UP &rarr;</a></li>
     <li><h3>Join your first operation.</h3><p>Check the Ops Board for upcoming sessions. Read the briefing in Discord and use the bot’s Join button before the scheduled start. Staff confirm attendance afterward.</p><a href="#operations">VIEW OPS BOARD &rarr;</a></li></ol>
     <div class="contact-note"><h3>Keep it fictional. Keep it respectful.</h3><p>Use fictional details in case reports, follow server rules, and agree roleplay boundaries with others. Questions about participation go to staff in Discord.</p><div class="guide-links"><a href="#questions">Read the FAQ</a><a href="./privacy.html">Your privacy</a><a href="./terms.html">Terms of Service</a></div></div>`;
   const questions = document.getElementById('questions');
-  if (questions) questions.before(guide); else about.after(guide);
+  const weekly = document.getElementById('uiu-week');
+  if (weekly) weekly.after(guide); else if (questions) questions.before(guide); else about.after(guide);
   const nav = document.querySelector('header nav');
   if (nav) for (const [label,href] of [['Updates','#announcements'],['Start here','#member-guide']]) {
     const link = document.createElement('a');link.textContent=label;link.href=href;nav.append(link);
