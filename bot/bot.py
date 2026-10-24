@@ -42,6 +42,18 @@ class Records:
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA secure_delete=ON')
         self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS training_sessions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+                starts_at TEXT NOT NULL, created_by TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'scheduled');
+            CREATE TABLE IF NOT EXISTS training_signups(
+                session_id INTEGER NOT NULL, member_id TEXT NOT NULL,
+                PRIMARY KEY(session_id,member_id));
+            CREATE TABLE IF NOT EXISTS training_results(
+                session_id INTEGER NOT NULL, member_id TEXT NOT NULL,
+                passed INTEGER NOT NULL CHECK(passed IN (0,1)),
+                recorded_by TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(session_id,member_id));
             CREATE TABLE IF NOT EXISTS cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL, description TEXT NOT NULL,
@@ -159,6 +171,59 @@ class Records:
         with self.db:
             self.db.execute('INSERT OR IGNORE INTO privacy_requests VALUES(?,?)', (str(member_id), now()))
 
+    def training_session(self, session_id):
+        row = self.db.execute('SELECT * FROM training_sessions WHERE id=?', (session_id,)).fetchone()
+        if row is None:
+            raise ValueError('Training session not found.')
+        return row
+
+    def schedule_training(self, title, starts_at, actor):
+        title = title.strip()
+        if not 1 <= len(title) <= 80:
+            raise ValueError('Use a title between 1 and 80 characters.')
+        starts_at = operation_time(starts_at)
+        with self.db:
+            cur = self.db.execute('INSERT INTO training_sessions(title,starts_at,created_by) VALUES(?,?,?)',
+                                  (title,starts_at,str(actor)))
+            self.audit(actor,'training_schedule',str(cur.lastrowid))
+        return cur.lastrowid
+
+    def training_signup(self, session_id, member_id, joining):
+        row = self.training_session(session_id)
+        if row['status'] != 'scheduled' or datetime.fromisoformat(row['starts_at']) <= datetime.now(timezone.utc):
+            raise ValueError('Sign-ups close when training starts or is cancelled/completed.')
+        with self.db:
+            if joining:
+                self.db.execute('INSERT OR IGNORE INTO training_signups VALUES(?,?)',(session_id,str(member_id)))
+            else:
+                self.db.execute('DELETE FROM training_signups WHERE session_id=? AND member_id=?',(session_id,str(member_id)))
+
+    def training_result(self, session_id, member_id, passed, actor):
+        row = self.training_session(session_id)
+        if str(member_id) == str(actor):
+            raise ValueError('Another staff member must record your result.')
+        if row['status'] == 'cancelled' or datetime.fromisoformat(row['starts_at']) > datetime.now(timezone.utc):
+            raise ValueError('Results can only be recorded after training starts, and not for cancelled sessions.')
+        if not self.db.execute('SELECT 1 FROM training_signups WHERE session_id=? AND member_id=?',
+                               (session_id,str(member_id))).fetchone():
+            raise ValueError('This member did not sign up for this training.')
+        with self.db:
+            self.db.execute('INSERT INTO training_results VALUES(?,?,?,?,?) ON CONFLICT(session_id,member_id) DO UPDATE SET passed=excluded.passed,recorded_by=excluded.recorded_by,updated_at=excluded.updated_at',
+                            (session_id,str(member_id),int(passed),str(actor),now()))
+            self.audit(actor,'training_result',json.dumps({'session':session_id,'member':str(member_id),'passed':passed}))
+
+    def training_status(self, session_id, status, actor):
+        row = self.training_session(session_id)
+        if status not in ('completed','cancelled') or row['status'] != 'scheduled':
+            raise ValueError('Only scheduled training can be completed or cancelled.')
+        if status == 'completed' and datetime.fromisoformat(row['starts_at']) > datetime.now(timezone.utc):
+            raise ValueError('Training has not started yet.')
+        if status == 'cancelled' and self.db.execute('SELECT 1 FROM training_results WHERE session_id=?',(session_id,)).fetchone():
+            raise ValueError('Training with recorded results cannot be cancelled; complete it instead.')
+        with self.db:
+            self.db.execute('UPDATE training_sessions SET status=? WHERE id=?',(status,session_id))
+            self.audit(actor,'training_'+status,str(session_id))
+
     def erase_user(self, member_id):
         """Remove structured identity links and ID references; external copies need manual review."""
         uid = str(member_id)
@@ -167,8 +232,10 @@ class Records:
         pattern = re.compile(r'(?<![0-9])' + re.escape(uid) + r'(?![0-9])')
         removed = '[removed]'
         with self.db:
-            for table in ('assignments', 'signups', 'attendance', 'privacy_requests', 'dossiers', 'credentials'):
+            for table in ('assignments', 'signups', 'attendance', 'privacy_requests', 'dossiers', 'credentials', 'training_signups', 'training_results'):
                 self.db.execute(f'DELETE FROM {table} WHERE member_id=?', (uid,))
+            self.db.execute('UPDATE training_results SET recorded_by=? WHERE recorded_by=?',(removed,uid))
+            self.db.execute("UPDATE training_sessions SET created_by=?,title=? WHERE created_by=?",(removed,'Removed training content',uid))
             self.db.execute('UPDATE dossiers SET updated_by=? WHERE updated_by=?', (removed,uid))
             self.db.execute('UPDATE credentials SET awarded_by=? WHERE awarded_by=?', (removed,uid))
             self.db.execute('UPDATE credentials SET revoked_by=? WHERE revoked_by=?', (removed,uid))
@@ -188,6 +255,7 @@ class Records:
             for table, columns in (
                 ('cases', ('title','description','resolution')),
                 ('operations', ('title','briefing')),
+                ('training_sessions', ('title',)),
                 ('case_notes', ('body','evidence_url')),
                 ('credentials', ('title','title_key','reason','revoke_reason')),
                 ('announcements', ('title','body')),
@@ -608,6 +676,76 @@ async def staff_check(interaction):
     raise app_commands.CheckFailure("Manage Server or configured staff role required")
 
 
+def install_training_sessions(bot):
+    group = bot.tree.get_command('training')
+
+    @group.command(name='schedule', description='Staff: schedule a training session')
+    @app_commands.check(staff_check)
+    async def schedule(interaction: discord.Interaction, title: app_commands.Range[str,1,80], starts_at: str):
+        session_id = bot.records.schedule_training(title, starts_at, interaction.user.id)
+        await interaction.response.send_message(f'Training #{session_id} scheduled. Members can find it with /training sessions and join with /training join.',ephemeral=True)
+
+    @group.command(name='sessions', description='Browse training sessions, newest first')
+    async def sessions(interaction: discord.Interaction, page: app_commands.Range[int,1,100000] = 1):
+        rows = bot.records.db.execute('SELECT * FROM training_sessions ORDER BY id DESC LIMIT 10 OFFSET ?',((page-1)*10,)).fetchall()
+        embed = discord.Embed(title='UIU training sessions',color=GOLD)
+        for row in rows:
+            timestamp = int(datetime.fromisoformat(row['starts_at']).timestamp())
+            embed.add_field(name=f"#{row['id']} | {row['title']}",value=f"{row['status']} | <t:{timestamp}:F>",inline=False)
+        if not rows: embed.description = 'No sessions on this page.'
+        embed.set_footer(text=f'Page {page} | /training join session_id')
+        await interaction.response.send_message(embed=embed,ephemeral=True)
+
+    @group.command(name='join', description='Sign yourself up before training starts')
+    async def join(interaction: discord.Interaction, session_id: app_commands.Range[int,1]):
+        if interaction.user.bot: raise ValueError('Human members only.')
+        bot.records.training_signup(session_id,interaction.user.id,True)
+        await interaction.response.send_message('You are signed up for this training.',ephemeral=True)
+
+    @group.command(name='leave', description='Withdraw your sign-up before training starts')
+    async def leave(interaction: discord.Interaction, session_id: app_commands.Range[int,1]):
+        bot.records.training_signup(session_id,interaction.user.id,False)
+        await interaction.response.send_message('Your sign-up has been removed.',ephemeral=True)
+
+    @group.command(name='roster', description='Staff: view sign-ups and pass/fail results')
+    @app_commands.check(staff_check)
+    async def roster(interaction: discord.Interaction, session_id: app_commands.Range[int,1], page: app_commands.Range[int,1,100000] = 1):
+        bot.records.training_session(session_id)
+        rows = bot.records.db.execute('SELECT s.member_id,r.passed FROM training_signups s LEFT JOIN training_results r ON s.session_id=r.session_id AND s.member_id=r.member_id WHERE s.session_id=? ORDER BY s.member_id LIMIT 15 OFFSET ?',(session_id,(page-1)*15)).fetchall()
+        text = '\\n'.join(f"<@{r['member_id']}> | " + ('Not assessed' if r['passed'] is None else 'Passed' if r['passed'] else 'Failed') for r in rows)
+        await interaction.response.send_message(f'Training #{session_id} | Page {page}\\n'+(text or 'No sign-ups on this page.'),ephemeral=True)
+
+    @group.command(name='result', description='Staff: record or correct a signed-up member pass/fail result')
+    @app_commands.check(staff_check)
+    async def result(interaction: discord.Interaction, session_id: app_commands.Range[int,1], member: discord.Member, passed: bool):
+        if member.bot: raise ValueError('Choose a human member.')
+        bot.records.training_result(session_id,member.id,passed,interaction.user.id)
+        await interaction.response.send_message('Result saved. This does not automatically award a qualification; use /training award if appropriate.',ephemeral=True)
+
+    @group.command(name='results', description='View your session results; staff may select another member')
+    async def results(interaction: discord.Interaction, member: discord.Member | None = None, page: app_commands.Range[int,1,100000] = 1):
+        target = member or interaction.user
+        if target.id != interaction.user.id: await staff_check(interaction)
+        rows = bot.records.db.execute('SELECT s.id,s.title,r.passed FROM training_results r JOIN training_sessions s ON s.id=r.session_id WHERE r.member_id=? ORDER BY s.id DESC LIMIT 10 OFFSET ?',(str(target.id),(page-1)*10)).fetchall()
+        embed = discord.Embed(title='Private training results',color=GOLD)
+        for row in rows:
+            embed.add_field(name=f"#{row['id']} | {row['title']}",value='Passed' if row['passed'] else 'Failed',inline=False)
+        if not rows: embed.description = 'No results on this page.'
+        await interaction.response.send_message(embed=embed,ephemeral=True)
+
+    @group.command(name='complete', description='Staff: complete a training session after it starts')
+    @app_commands.check(staff_check)
+    async def complete(interaction: discord.Interaction, session_id: app_commands.Range[int,1]):
+        bot.records.training_status(session_id,'completed',interaction.user.id)
+        await interaction.response.send_message('Training completed. Unassessed members stay unassessed; results can still be recorded or corrected.',ephemeral=True)
+
+    @group.command(name='cancel', description='Staff: cancel a scheduled training without results')
+    @app_commands.check(staff_check)
+    async def cancel(interaction: discord.Interaction, session_id: app_commands.Range[int,1]):
+        bot.records.training_status(session_id,'cancelled',interaction.user.id)
+        await interaction.response.send_message('Training cancelled.',ephemeral=True)
+
+
 def install_commands(bot):
     announcements = app_commands.Group(name='announcement', description='Staff: publish updates to the public website', guild_only=True)
 
@@ -836,6 +974,7 @@ def install_commands(bot):
 
     install_credentials('training', 'Training qualifications')
     install_credentials('commendation', 'Commendations')
+    install_training_sessions(bot)
 
     @cases.command(name='assign', description='Assign a lead agent to an open case')
     @app_commands.check(case_check)
