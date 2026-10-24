@@ -33,6 +33,68 @@ class BotTests(unittest.TestCase):
         self.records.db.close()
         self.temp.cleanup()
 
+    def test_training_lifecycle_and_privacy(self):
+        r = self.records
+        sid = r.schedule_training('Flight training','2099-10-24T19:00Z',12345)
+        r.training_signup(sid,23456,True)
+        r.training_signup(sid,23456,True)
+        self.assertEqual(r.db.execute('SELECT COUNT(*) FROM training_signups').fetchone()[0],1)
+        r.training_signup(sid,23456,False)
+        r.training_signup(sid,23456,True)
+        with self.assertRaises(ValueError): r.training_result(sid,23456,True,12345)
+        with self.assertRaises(ValueError): r.training_status(sid,'completed',12345)
+        with r.db: r.db.execute("UPDATE training_sessions SET starts_at='2000-01-01T00:00:00+00:00' WHERE id=?",(sid,))
+        with self.assertRaises(ValueError): r.training_signup(sid,34567,True)
+        with self.assertRaises(ValueError): r.training_result(sid,23456,True,23456)
+        with self.assertRaises(ValueError): r.training_result(sid,34567,True,12345)
+        r.training_result(sid,23456,True,12345)
+        r.training_result(sid,23456,False,12345)
+        self.assertEqual(r.db.execute('SELECT passed FROM training_results').fetchone()[0],0)
+        with self.assertRaises(ValueError): r.training_status(sid,'cancelled',12345)
+        r.training_status(sid,'completed',12345)
+        r.training_result(sid,23456,True,12345)
+        import sqlite3
+        backup = sqlite3.connect(':memory:')
+        backup.deserialize(r.backup_bytes())
+        self.assertEqual(backup.execute('SELECT passed FROM training_results').fetchone()[0],1)
+        backup.close()
+        other = Records(self.path)
+        self.assertEqual(other.training_session(sid)['status'],'completed')
+        other.db.close()
+        r.erase_user(12345)
+        self.assertEqual(r.training_session(sid)['created_by'],'[removed]')
+        self.assertEqual(r.db.execute('SELECT recorded_by FROM training_results').fetchone()[0],'[removed]')
+        r.erase_user(23456)
+        self.assertEqual(r.db.execute('SELECT COUNT(*) FROM training_signups').fetchone()[0],0)
+        self.assertEqual(r.db.execute('SELECT COUNT(*) FROM training_results').fetchone()[0],0)
+
+    def test_training_cancel_and_permissions(self):
+        sid = self.records.schedule_training('Training','2099-10-24T19:00Z',1)
+        self.records.training_status(sid,'cancelled',1)
+        with self.assertRaises(ValueError): self.records.training_signup(sid,2,True)
+        with self.assertRaises(ValueError): self.records.training_result(sid,2,True,1)
+        bot = UIUBot(123,self.records)
+        install_commands(bot)
+        group = bot.tree.get_command('training')
+        for name in ('schedule','roster','result','complete','cancel'):
+            self.assertIn(staff_check,group.get_command(name).checks)
+        for name in ('sessions','join','leave','results'):
+            self.assertEqual(group.get_command(name).checks,[])
+        self.assertNotIn('training_results',bot.stats())
+
+    def test_training_results_other_member_requires_staff(self):
+        from unittest.mock import AsyncMock
+        bot = UIUBot(123,self.records)
+        install_commands(bot)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=10),
+            guild=SimpleNamespace(fetch_member=AsyncMock(return_value=SimpleNamespace(guild_permissions=SimpleNamespace(manage_guild=False),roles=[]))),
+            response=SimpleNamespace(send_message=AsyncMock()))
+        async def run():
+            await bot.tree.get_command('training').get_command('results').callback(interaction)
+            with self.assertRaises(app_commands.CheckFailure):
+                await bot.tree.get_command('training').get_command('results').callback(interaction,SimpleNamespace(id=20))
+        asyncio.run(run())
+
     def test_case_lifecycle_and_restart(self):
         case_id = self.records.create('Missouri', 'Incident report', 123)
         self.assertEqual(self.records.counts(), {'open': 1, 'closed': 0})
