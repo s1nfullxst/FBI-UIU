@@ -474,10 +474,14 @@ class UIUTree(app_commands.CommandTree):
 
 class UIUBot(discord.Client):
     def __init__(self, guild_id, records):
-        super().__init__(intents=discord.Intents.default(), allowed_mentions=discord.AllowedMentions.none())
+        intents = discord.Intents.default()
+        intents.members = True
+        super().__init__(intents=intents, member_cache_flags=discord.MemberCacheFlags.none(),
+                         chunk_guilds_at_startup=False, allowed_mentions=discord.AllowedMentions.none())
         self.guild_id = guild_id
         self.records = records
         self.tree = UIUTree(self)
+        self.case_managers = None
         self.member_count = None
         self.member_updated_at = None
         self.runner = None
@@ -505,12 +509,22 @@ class UIUBot(discord.Client):
     @tasks.loop(minutes=5)
     async def refresh_members(self):
         try:
-            guild = await self.fetch_guild(self.guild_id, with_counts=True)
-            if guild.approximate_member_count is not None:
-                self.member_count = guild.approximate_member_count
-                self.member_updated_at = now()
-        except discord.HTTPException as exc:
-            LOG.warning("Member count refresh failed (HTTP %s); retaining previous count.", exc.status)
+            guild = await self.fetch_guild(self.guild_id)
+            count, managers = 0, []
+            async for member in guild.fetch_members(limit=None):
+                if not member.bot or member.id == self.user.id:
+                    count += 1
+                if not member.bot and any(r.id == case_manager_role_id() for r in member.roles):
+                    managers.append({"display_name": member.display_name})
+            # Publish only complete snapshots, never a partially fetched member list.
+            self.member_count = count
+            self.case_managers = sorted(managers, key=lambda m: m["display_name"].casefold())
+            self.member_updated_at = now()
+        except (discord.HTTPException, discord.ClientException) as exc:
+            self.member_count = None
+            self.case_managers = None
+            self.member_updated_at = None
+            LOG.warning("Member roster unavailable (%s). Check Server Members Intent.", type(exc).__name__)
 
     @refresh_members.before_loop
     async def before_members(self):
@@ -527,7 +541,9 @@ class UIUBot(discord.Client):
 
     def stats(self):
         counts = self.records.counts()
-        return {"members": self.member_count, "members_approximate": True,
+        return {"members": self.member_count, "members_approximate": False,
+                "members_scope": "humans_and_uiu_bot",
+                "case_managers": self.case_managers,
                 "members_updated_at": self.member_updated_at,
                 "open_cases": counts["open"], "closed_cases": counts["closed"],
                 "generated_at": now(), "bot_online": self.is_ready(),
@@ -536,7 +552,7 @@ class UIUBot(discord.Client):
                       'SELECT id,title,body,published_at FROM announcements ORDER BY id DESC LIMIT 5')]}
 
     async def stats_route(self, request):
-        # Public schedule and aggregate counts only; no briefings, case text, member identities or credentials.
+        # Public schedule, counts, announcements and Case Manager display names only.
         return web.json_response(self.stats(), headers={
             "Access-Control-Allow-Origin": "https://s1nfullxst.github.io",
             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
@@ -565,6 +581,21 @@ class UIUBot(discord.Client):
         if self.runner:
             await self.runner.cleanup()
         await super().close()
+
+
+def case_manager_role_id():
+    return int(os.getenv("CASE_MANAGER_ROLE_ID") or "1562783587198042272")
+
+
+async def case_check(interaction):
+    if not interaction.guild or interaction.guild.id != interaction.client.guild_id:
+        raise app_commands.CheckFailure("Configured server only")
+    member = await interaction.guild.fetch_member(interaction.user.id)
+    roles = {r.id for r in member.roles}
+    staff_role = int(os.getenv("STAFF_ROLE_ID") or "0")
+    if member.guild_permissions.manage_guild or staff_role in roles or case_manager_role_id() in roles:
+        return True
+    raise app_commands.CheckFailure("Case Manager, configured staff role or Manage Server required")
 
 
 async def staff_check(interaction):
@@ -645,7 +676,7 @@ def install_commands(bot):
     cases = app_commands.Group(name="case", description="UIU case records", guild_only=True)
 
     @cases.command(name="open", description="Open a new case and receive its ID")
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_open(interaction: discord.Interaction,
                         title: app_commands.Range[str, 1, 100],
                         description: app_commands.Range[str, 1, 2000]):
@@ -653,21 +684,21 @@ def install_commands(bot):
         await interaction.response.send_message(f"Case #{case_id} opened: {discord.utils.escape_markdown(title)}", ephemeral=True)
 
     @cases.command(name="close", description="Close a case with a resolution")
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_close(interaction: discord.Interaction, case_id: app_commands.Range[int, 1],
                          resolution: app_commands.Range[str, 1, 1000]):
         bot.records.transition(case_id, "closed", resolution, interaction.user.id)
         await interaction.response.send_message(f"Case #{case_id} closed. Stats updated.", ephemeral=True)
 
     @cases.command(name="reopen", description="Reopen a closed case")
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_reopen(interaction: discord.Interaction, case_id: app_commands.Range[int, 1],
                           reason: app_commands.Range[str, 1, 1000]):
         bot.records.transition(case_id, "open", reason, interaction.user.id)
         await interaction.response.send_message(f"Case #{case_id} reopened. Stats updated.", ephemeral=True)
 
     @cases.command(name="view", description="Read a case record privately")
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_view(interaction: discord.Interaction, case_id: app_commands.Range[int, 1]):
         row = bot.records.get(case_id)
         if row is None:
@@ -683,7 +714,7 @@ def install_commands(bot):
 
     @cases.command(name="list", description="List open or closed cases, ten per page")
     @app_commands.choices(status=[app_commands.Choice(name="Open", value="open"), app_commands.Choice(name="Closed", value="closed")])
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_list(interaction: discord.Interaction, status: str = "open", page: app_commands.Range[int, 1, 100000] = 1):
         if status not in ("open", "closed"):
             raise ValueError("Choose open or closed.")
@@ -695,14 +726,14 @@ def install_commands(bot):
     bot.tree.add_command(cases)
 
     @cases.command(name='note', description='Add a staff-only case note and optional evidence link')
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_note(interaction: discord.Interaction, case_id: app_commands.Range[int, 1],
                         text: app_commands.Range[str, 1, 1000], evidence_url: app_commands.Range[str, 1, 500] | None = None):
         note_id = bot.records.add_note(case_id, interaction.user.id, text, evidence_url or '')
         await interaction.response.send_message(f'Note #{note_id} saved to case #{case_id}.', ephemeral=True)
 
     @cases.command(name='notes', description='Read staff-only notes and evidence, three per page')
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_notes(interaction: discord.Interaction, case_id: app_commands.Range[int, 1], page: app_commands.Range[int, 1, 100000] = 1):
         rows = bot.records.notes(case_id, page)
         embed = discord.Embed(title=f'Case #{case_id} | Notes | Page {page}', color=GOLD)
@@ -807,7 +838,7 @@ def install_commands(bot):
     install_credentials('commendation', 'Commendations')
 
     @cases.command(name='assign', description='Assign a lead agent to an open case')
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_assign(interaction: discord.Interaction, case_id: app_commands.Range[int, 1], member: discord.Member):
         if member.bot:
             raise ValueError('Choose a human agent.')
@@ -815,7 +846,7 @@ def install_commands(bot):
         await interaction.response.send_message(f'Case #{case_id} assigned to {member.display_name}.', ephemeral=True)
 
     @cases.command(name='unassign', description='Remove the lead agent from an open case')
-    @app_commands.check(staff_check)
+    @app_commands.check(case_check)
     async def case_unassign(interaction: discord.Interaction, case_id: app_commands.Range[int, 1]):
         bot.records.assign(case_id, None, interaction.user.id)
         await interaction.response.send_message(f'Case #{case_id} is now unassigned.', ephemeral=True)
@@ -977,10 +1008,10 @@ def install_commands(bot):
     async def stats(interaction: discord.Interaction):
         data = bot.stats()
         embed = discord.Embed(title="FBI UIU | Statistics", color=GOLD)
-        embed.add_field(name="Members (approx.)", value=str(data["members"]) if data["members"] is not None else "Updating")
+        embed.add_field(name="Members (people + UIU bot)", value=str(data["members"]) if data["members"] is not None else "Updating")
         embed.add_field(name="Open cases", value=str(data["open_cases"]))
         embed.add_field(name="Closed cases", value=str(data["closed_cases"]))
-        embed.set_footer(text="Member count includes bots. Cases tracked by this bot only.")
+        embed.set_footer(text="Member count includes people and this UIU bot only. Cases tracked by this bot only.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="help", description="Show UIU bot commands")
@@ -1005,7 +1036,7 @@ def install_commands(bot):
             "`/training award` / `revoke` / `list` - qualifications\n"
             "`/commendation award` / `revoke` / `list` - medals and recognition\n\n"
             "`/announcement publish` / `list` / `remove` - public website updates\n\n"
-            "Cases and operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
+            "Cases also allow the Case Manager role. Operation changes require Manage Server or the configured staff role. Promotions require Manage Roles. "
             "Promotion and operation announcements go to the configured channels; case details stay private.", ephemeral=True)
 
 
