@@ -68,6 +68,22 @@ class BotTests(unittest.TestCase):
         self.assertEqual(r.db.execute('SELECT COUNT(*) FROM training_signups').fetchone()[0],0)
         self.assertEqual(r.db.execute('SELECT COUNT(*) FROM training_results').fetchone()[0],0)
 
+    def test_public_training_schedule_minimizes_data(self):
+        from datetime import datetime, timedelta, timezone
+        r=self.records
+        future=(datetime.now(timezone.utc)+timedelta(days=1)).isoformat()
+        sid=r.schedule_training('Public lesson',future,12345)
+        r.training_signup(sid,23456,True)
+        cancelled=r.schedule_training('Cancelled',future,12345)
+        r.training_status(cancelled,'cancelled',12345)
+        past=r.schedule_training('Past',future,12345)
+        with r.db: r.db.execute("UPDATE training_sessions SET starts_at='2000-01-01T00:00:00+00:00' WHERE id=?",(past,))
+        feed=UIUBot(123,r).stats()['activity']['upcoming_training']
+        self.assertEqual(len(feed),1)
+        self.assertEqual(feed[0],{'id':sid,'title':'Public lesson','starts_at':future})
+        for i in range(15): r.schedule_training('Lesson '+str(i),future,12345)
+        self.assertEqual(len(UIUBot(123,r).public_activity()['upcoming_training']),12)
+
     def test_training_cancel_and_permissions(self):
         sid = self.records.schedule_training('Training','2099-10-24T19:00Z',1)
         self.records.training_status(sid,'cancelled',1)
