@@ -361,3 +361,86 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
   }
   start();
 })();
+
+
+/* Four-page navigation; query URLs work directly on GitHub Pages. */
+(() => {
+'use strict';
+const main=document.querySelector('main'),nav=document.querySelector('header nav');
+if(!main||!nav)return;
+const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
+const pages={home:{label:'Home',title:'FBI / UIU — Unusual Incidents Unit'},unit:{label:'Our unit',title:'Our unit — FBI / UIU'},operations:{label:'Operations',title:'Operations — FBI / UIU'},archives:{label:'Case archives',title:'Case archives — FBI / UIU'}};
+const groups={
+ home:['uiu-week','announcements'],
+ unit:['member-guide','about','leadership','departments','recruitment','community','questions','join'],
+ operations:['operations','training-schedule','operation-calendar','gallery','games'],
+ archives:['case-files','case-managers','briefings','experience']
+};
+const destinations={};
+for(const [page,ids] of Object.entries(groups))for(const id of ids)destinations[id]=page;
+const style=el('style');style.textContent=`
+main>[hidden]{display:none!important}header .nav{display:flex;flex-wrap:wrap;gap:20px;align-items:center}header nav{flex:1;justify-content:center;gap:22px}header nav a{white-space:nowrap}header nav a[aria-current=page]{color:var(--gold);border-bottom:2px solid var(--gold);padding-bottom:6px}.site-actions{display:flex;gap:10px;align-items:center}.site-actions .resource-button,.site-actions .button{font:12px Arial,sans-serif;padding:11px 13px;white-space:nowrap}.site-page-heading{padding:48px 0 10px}.site-page-heading h1{font:clamp(36px,5vw,60px) Georgia,serif;margin:16px 0}.site-page-heading p{color:var(--muted);max-width:650px}.hero{min-height:480px}.hero h1{font-size:clamp(42px,6vw,72px)}.page-home #news-list:not(.show-older) .news-card:nth-child(n+2){display:none}.page-home #news-list{grid-template-columns:1fr}.older-updates{margin-top:18px}.site-footer-links{display:flex;gap:18px;flex-wrap:wrap;margin-top:20px;font-size:13px}.site-footer-links button{background:none;border:0;color:var(--gold);padding:0;font:inherit;cursor:pointer}.site-actions :focus-visible,.site-footer-links :focus-visible{outline:2px solid var(--gold);outline-offset:4px}
+@media(max-width:1050px){header .brand span{display:none}header nav{gap:15px}.site-actions{margin-left:auto}}
+@media(max-width:720px){header .nav{gap:14px}header nav{order:3;flex-basis:100%;justify-content:space-between;gap:10px;font-size:12px}.site-actions .button,.site-actions .resource-button{padding:10px}.hero{min-height:auto}.site-page-heading{padding-top:30px}}
+`;document.head.append(style);
+function urlFor(page,hash=''){const url=new URL(location.href);url.search='';if(page!=='home')url.searchParams.set('page',page);url.hash=hash;return url.pathname+url.search+url.hash;}
+function routeLink(label,page,hash){const a=el('a',label);a.href=urlFor(page,hash);a.dataset.uiuRoute='true';return a;}
+nav.replaceChildren();
+const navLinks={};
+for(const [key,page] of Object.entries(pages)){const a=routeLink(page.label,key);navLinks[key]=a;nav.append(a);}
+const openButton=document.querySelector('#command-guide button');
+function commandButton(){const button=el('button','Find a command','resource-button');button.type='button';button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-controls','command-dialog');button.onclick=()=>openButton?.click();return button;}
+const actions=el('div',undefined,'site-actions'),discord=el('a','Join Discord','button');discord.href='https://discord.gg/qmdEWAhBUy';actions.append(commandButton(),discord);nav.after(actions);
+const brand=document.querySelector('header .brand');if(brand){brand.href=urlFor('home');brand.dataset.uiuRoute='true';}
+const commandGuide=document.getElementById('command-guide');if(commandGuide)commandGuide.hidden=true;
+const resourceNav=document.querySelector('nav[aria-label="Community resources"]');if(resourceNav)resourceNav.remove();
+const pageHeading=el('div',undefined,'site-page-heading'),pageTitle=el('h1'),pageDescription=el('p');
+pageHeading.append(el('span','FBI / UIU','mono'),pageTitle,pageDescription);main.prepend(pageHeading);
+const descriptions={unit:'Meet the leadership, find your department and get started in the unit.',operations:'Plan your next operation or training session and explore moments from the field.',archives:'Read published case reports, meet the Case Managers and explore roleplay briefings.'};
+const training=el('section');training.id='training-schedule';training.setAttribute('aria-labelledby','training-schedule-title');
+const trainingTitle=el('h2','Training sessions.');trainingTitle.id='training-schedule-title';
+const trainingState=el('p','Training schedule unavailable. Check /training sessions in Discord.','resource-note'),trainingList=el('div',undefined,'resource-grid');trainingState.setAttribute('role','status');
+training.append(trainingTitle,el('p','Upcoming training, with times shown in your local timezone. Sign up through the UIU bot in Discord.'),trainingState,trainingList);main.append(training);
+document.addEventListener('uiu-stats',event=>{
+ const rows=event.detail.activity?.upcoming_training;
+ trainingList.replaceChildren();
+ if(!Array.isArray(rows)||rows.length>12||!rows.every(r=>r&&Number.isSafeInteger(r.id)&&r.id>0&&typeof r.title==='string'&&r.title.length<=100&&Number.isFinite(Date.parse(r.starts_at)))){trainingState.textContent='Training schedule unavailable. Check /training sessions in Discord.';return;}
+ const upcoming=rows.filter(r=>Date.parse(r.starts_at)>=Date.now()).sort((a,b)=>Date.parse(a.starts_at)-Date.parse(b.starts_at));
+ trainingState.textContent=upcoming.length?'Updated '+new Date().toLocaleTimeString()+'. Showing up to 12 upcoming sessions.':'No training sessions scheduled yet.';
+ for(const row of upcoming){const card=el('article',undefined,'resource-card'),time=el('time',new Date(row.starts_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}));time.dateTime=row.starts_at;card.append(el('h3',row.title),time,el('p','Training #'+row.id),el('code','/training join session_id:'+row.id));trainingList.append(card);}
+});
+document.addEventListener('uiu-unavailable',()=>{trainingList.replaceChildren();trainingState.textContent='Live training schedule unavailable. Check Discord for confirmed sessions.';});
+const news=document.getElementById('announcements'),newsList=document.getElementById('news-list');
+if(news&&newsList){const older=el('button','Show older updates','resource-button older-updates');older.type='button';older.setAttribute('aria-expanded','false');older.setAttribute('aria-controls','news-list');older.onclick=()=>{const expanded=newsList.classList.toggle('show-older');older.setAttribute('aria-expanded',String(expanded));older.textContent=expanded?'Hide older updates':'Show older updates';};news.append(older);older.hidden=true;document.addEventListener('uiu-stats',()=>{older.hidden=newsList.children.length<=1;});}
+const footer=document.querySelector('footer');
+if(footer){const links=el('div',undefined,'site-footer-links');links.append(routeLink('Start here','unit','member-guide'),routeLink('FAQ','unit','questions'),commandButton());footer.append(links);}
+const heroAction=document.querySelector('.hero .actions a');if(heroAction)heroAction.setAttribute('href','#member-guide');
+// Repair every old section link, including archived links from earlier versions.
+for(const a of document.querySelectorAll('a[href^="#"]')){
+ const hash=a.getAttribute('href').slice(1);
+ const target=document.getElementById(hash);
+ const section=target?.closest('main > section');
+ const page=destinations[hash]||destinations[section?.id]||(hash===''?'home':null);
+ if(page){a.href=urlFor(page,hash);a.dataset.uiuRoute='true';}
+}
+for(const [page,ids] of Object.entries(groups))for(const id of ids){const node=document.getElementById(id);if(node){node.dataset.uiuPage=page;main.append(node);}}
+for(const node of main.children){
+ if(node.matches('.hero,.hero-meta,.strip,.community-stats'))node.dataset.uiuPage='home';
+}
+function resolvePage(){const requested=new URL(location.href).searchParams.get('page');if(Object.hasOwn(pages,requested))return requested;const hash=decodeURIComponent(location.hash.slice(1));const target=document.getElementById(hash),section=target?.closest('main > section');return destinations[hash]||destinations[section?.id]||'home';}
+function render(navigate=false){
+ const page=resolvePage();document.title=pages[page].title;document.body.classList.remove('page-home','page-unit','page-operations','page-archives');document.body.classList.add('page-'+page);
+ for(const node of main.children){if(node===pageHeading)continue;node.hidden=node.dataset.uiuPage!==page;}
+ pageHeading.hidden=page==='home';pageTitle.textContent=pages[page].label;pageDescription.textContent=descriptions[page]||'';
+ for(const [key,a] of Object.entries(navLinks)){if(key===page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
+ const id=decodeURIComponent(location.hash.slice(1)),target=id?document.getElementById(id):null;
+ if(target&&!target.closest('[hidden]')){requestAnimationFrame(()=>target.scrollIntoView({block:'start'}));}
+ else if(navigate){window.scrollTo({top:0,behavior:'instant'});}
+ if(navigate){const focusTarget=page==='home'?main.querySelector('.hero h1'):pageTitle;focusTarget?.setAttribute('tabindex','-1');focusTarget?.focus({preventScroll:true});}
+}
+document.addEventListener('click',event=>{
+ const a=event.target.closest?.('a[data-uiu-route]');if(!a||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+ event.preventDefault();history.pushState({},'',a.href);render(true);
+});
+window.addEventListener('popstate',()=>render(true));window.addEventListener('hashchange',()=>render());render();
+})();
