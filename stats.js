@@ -427,20 +427,57 @@ for(const [page,ids] of Object.entries(groups))for(const id of ids){const node=d
 for(const node of main.children){
  if(node.matches('.hero,.hero-meta,.strip,.community-stats'))node.dataset.uiuPage='home';
 }
+
+const compactStyle=el('style');compactStyle.textContent=`
+.subpage-menu{display:flex;gap:10px;flex-wrap:wrap;padding:20px 0;border-bottom:1px solid var(--line);margin-bottom:20px}.subpage-menu a{font:13px Arial,sans-serif;padding:11px 16px;border:1px solid var(--line);color:var(--ink)}.subpage-menu a[aria-current=page]{background:var(--gold);color:#101c2c}.subpage-menu a:focus-visible,.compact-detail-button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+main>section{padding-top:25px;padding-bottom:25px}.site-page-heading{padding-top:22px}.site-page-heading h1{font-size:38px;margin:8px 0}.site-page-heading p{margin:8px 0}.page-home .hero{min-height:0;padding-top:20px;padding-bottom:20px;gap:20px}.page-home .hero h1{font-size:clamp(36px,5vw,58px)}.page-home .seal-panel{min-height:230px;max-height:300px}.page-home .seal-panel img{max-height:250px;width:auto;max-width:100%;object-fit:contain}.page-home .emblem-orbit{max-height:270px;max-width:270px}
+#leadership .leadership{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}#leadership .person{padding:16px;min-width:0}#leadership .person h3{font-size:21px;margin:10px 0}#leadership .person .mono{font-size:10px}#leadership .leader-portrait{margin-bottom:12px;height:135px;object-fit:contain;background:#101c2c}#leadership .initial{font-size:22px;margin-bottom:12px}#leadership .group-title{margin:18px 0 12px;font-size:18px}#leadership>.draft-note{display:none}#leadership>.section-head p{display:none}.compact-detail-button{margin-top:14px;padding:9px 12px;font-size:12px}.compact-dialog{box-sizing:border-box;width:min(700px,calc(100vw - 30px));max-height:85vh;overflow:auto;padding:25px;background:#101c2c;color:var(--ink);border:1px solid var(--gold)}.compact-dialog::backdrop{background:#000b}.compact-dialog h2{font:30px Georgia,serif}.compact-dialog p,.compact-dialog li{font-size:15px;line-height:1.7}.compact-dialog-head{display:flex;justify-content:space-between;align-items:center;gap:20px}.compact-dialog [hidden],.person [hidden],.department-list [hidden]{display:none!important}#departments .department-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}#departments .department-list article{padding:20px;display:block}#departments h3{font-size:24px}
+@media(max-width:900px){#leadership .leadership{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:560px){#departments .department-list{grid-template-columns:1fr}.subpage-menu{gap:7px}.subpage-menu a{padding:10px;font-size:12px}#leadership .person{padding:12px}#leadership .leader-portrait{height:110px}.page-home .seal-panel{display:none}}
+`;document.head.append(compactStyle);
+const detailDialog=el('dialog',undefined,'compact-dialog'),detailHead=el('div',undefined,'compact-dialog-head'),detailTitle=el('h2'),detailClose=el('button','Close','resource-button'),detailBody=el('div');
+detailTitle.id='compact-detail-title';detailDialog.setAttribute('aria-labelledby',detailTitle.id);detailClose.type='button';detailHead.append(detailTitle,detailClose);detailDialog.append(detailHead,detailBody);document.body.append(detailDialog);
+let detailOpener=null,detailOverflow='';
+function openDetails(title,nodes){detailTitle.textContent=title;detailBody.replaceChildren();for(const node of nodes){const copy=node.cloneNode(true);copy.hidden=false;copy.removeAttribute('id');for(const child of copy.querySelectorAll('[id]'))child.removeAttribute('id');detailBody.append(copy);}detailOpener=document.activeElement;detailOverflow=document.body.style.overflow;detailDialog.showModal();document.body.style.overflow='hidden';detailClose.focus();}
+detailClose.onclick=()=>detailDialog.close();detailDialog.addEventListener('close',()=>{document.body.style.overflow=detailOverflow;detailOpener?.focus();});
+detailDialog.addEventListener('click',event=>{if(event.target!==detailDialog)return;const r=detailDialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)detailDialog.close();});
+for(const card of document.querySelectorAll('#leadership .person')){const nodes=[...card.querySelectorAll('.role-description,.duties')];nodes.forEach(n=>n.hidden=true);const button=el('button','View duties','resource-button compact-detail-button');button.type='button';button.setAttribute('aria-haspopup','dialog');button.onclick=()=>openDetails(card.querySelector('h3').textContent,nodes);card.append(button);}
+for(const card of document.querySelectorAll('#departments .department-list article')){const nodes=[...card.querySelectorAll('p,a')];nodes.forEach(n=>n.hidden=true);const button=el('button','Explore department','resource-button compact-detail-button');button.type='button';button.setAttribute('aria-haspopup','dialog');button.onclick=()=>openDetails(card.querySelector('h3').textContent,nodes);card.append(button);}
+const submenu=el('nav',undefined,'subpage-menu');submenu.setAttribute('aria-label','Page sections');pageHeading.after(submenu);
+const panels={
+ home:[['overview','Overview'],['uiu-week','This week'],['announcements','Updates']],
+ unit:[['leadership','Leadership'],['departments','Departments'],['member-guide','Start here'],['about','About'],['recruitment','Recruitment'],['community','Community']],
+ operations:[['operations','Ops Board'],['training-schedule','Training'],['operation-calendar','Calendar'],['gallery','Photos'],['games','Games']],
+ archives:[['case-files','Reports'],['case-managers','Case Managers'],['briefings','Briefings'],['experience','Case process']]
+};
+destinations.overview='home';
+function compactPage(page){
+ let hash;try{hash=decodeURIComponent(location.hash.slice(1));}catch{hash='';}
+ const target=document.getElementById(hash),parent=target?.closest('main > section');
+ let active=panels[page].some(([id])=>id===hash)?hash:panels[page].some(([id])=>id===parent?.id)?parent.id:panels[page][0][0];
+ submenu.hidden=false;submenu.replaceChildren();
+ for(const [id,label] of panels[page]){const a=routeLink(label,page,id);if(id===active)a.setAttribute('aria-current','page');submenu.append(a);}
+ if(page==='unit'){const faq=el('button','FAQ','resource-button');faq.type='button';faq.setAttribute('aria-haspopup','dialog');faq.onclick=()=>openDetails('Frequently asked questions',[...document.querySelectorAll('#questions > :not(.section-head)')]);submenu.append(faq);}
+ for(const node of main.children){if(node===pageHeading||node===submenu)continue;node.hidden=!(active==='overview'?node.matches('.hero,.community-stats'):node.id===active);}
+ if(hash==='questions'&&page==='unit'&&!detailDialog.open)openDetails('Frequently asked questions',[...document.querySelectorAll('#questions > :not(.section-head)')]);
+ // Existing join links open the newcomer guide rather than another long panel.
+ if(hash==='join'&&page==='unit'){document.getElementById(active).hidden=true;document.getElementById('member-guide').hidden=false;}
+}
+
 function resolvePage(){const requested=new URL(location.href).searchParams.get('page');if(Object.hasOwn(pages,requested))return requested;const hash=decodeURIComponent(location.hash.slice(1));const target=document.getElementById(hash),section=target?.closest('main > section');return destinations[hash]||destinations[section?.id]||'home';}
 function render(navigate=false){
  const page=resolvePage();document.title=pages[page].title;document.body.classList.remove('page-home','page-unit','page-operations','page-archives');document.body.classList.add('page-'+page);
  for(const node of main.children){if(node===pageHeading)continue;node.hidden=node.dataset.uiuPage!==page;}
  pageHeading.hidden=page==='home';pageTitle.textContent=pages[page].label;pageDescription.textContent=descriptions[page]||'';
  for(const [key,a] of Object.entries(navLinks)){if(key===page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
+ compactPage(page);
  const id=decodeURIComponent(location.hash.slice(1)),target=id?document.getElementById(id):null;
- if(target&&!target.closest('[hidden]')){requestAnimationFrame(()=>target.scrollIntoView({block:'start'}));}
+ if(target&&!target.closest('[hidden]')){requestAnimationFrame(()=>window.scrollTo({top:0,behavior:'instant'}));}
  else if(navigate){window.scrollTo({top:0,behavior:'instant'});}
  if(navigate){const focusTarget=page==='home'?main.querySelector('.hero h1'):pageTitle;focusTarget?.setAttribute('tabindex','-1');focusTarget?.focus({preventScroll:true});}
 }
 document.addEventListener('click',event=>{
  const a=event.target.closest?.('a[data-uiu-route]');if(!a||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
- event.preventDefault();history.pushState({},'',a.href);render(true);
+ event.preventDefault();if(detailDialog.open)detailDialog.close();history.pushState({},'',a.href);render(true);
 });
 window.addEventListener('popstate',()=>render(true));window.addEventListener('hashchange',()=>render());render();
 })();
