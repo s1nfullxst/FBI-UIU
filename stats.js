@@ -89,10 +89,10 @@ const main=document.querySelector('main');if(!main)return;
 const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
 function section(id,title,description,before){const s=el('section');s.id=id;const h=el('h2',title);h.id=id+'-title';s.setAttribute('aria-labelledby',h.id);s.append(el('span','UIU / COMMUNITY RESOURCES','mono'),h,el('p',description));if(before)before.before(s);else main.append(s);return s;}
 const style=el('style');style.textContent='.resource-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.resource-card{padding:24px;border:1px solid var(--line);background:var(--panel);min-width:0}.resource-card h3{font:26px Georgia,serif}.resource-card p{font-size:14px;overflow-wrap:anywhere}.resource-tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:22px 0}.resource-tools label{display:flex;flex-direction:column;gap:8px;font:12px monospace;color:var(--gold)}.resource-tools input,.resource-tools select,.resource-button{padding:12px;background:#101c2c;color:var(--ink);border:1px solid var(--line);font:14px Arial,sans-serif;max-width:100%;box-sizing:border-box}.resource-button{cursor:pointer}.resource-tools :focus-visible,.cal-day:focus-visible,.photo-button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}.resource-note{font:12px/1.8 monospace;color:var(--muted)}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}.cal-heading{text-align:center;font:11px monospace;color:var(--muted);padding:10px 0}.cal-day{min-height:58px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font:15px Arial,sans-serif}.cal-day.has-events{border-bottom:3px solid var(--gold)}.cal-day[aria-pressed=true]{outline:2px solid var(--gold);outline-offset:-2px}.cal-day.today{color:var(--gold);font-weight:bold}.cal-count{display:block;font:10px monospace;margin-top:5px}.report-timeline{border-left:2px solid var(--gold);margin:20px 0 25px 12px;padding-left:26px}.report-timeline li{padding:10px 0 16px}.report-timeline p{font-size:13px}.gallery-image{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}.photo-button{padding:0;border:0;background:transparent;width:100%;cursor:zoom-in}.photo-dialog{max-width:min(950px,95vw);max-height:90vh;background:#101c2c;color:var(--ink);border:1px solid var(--gold);padding:20px}.photo-dialog::backdrop{background:#000b}.photo-dialog img{max-width:100%;max-height:65vh;object-fit:contain;display:block;margin:16px auto}.command-row{padding:18px 0;border-bottom:1px solid var(--line)}.command-row code{color:var(--gold);overflow-wrap:anywhere}.command-row p{font-size:14px;margin:7px 0}.command-row small{color:var(--muted)}@media(max-width:650px){.resource-grid{grid-template-columns:1fr}.cal-day{min-height:50px}.resource-tools label{width:100%}.cal-heading{font-size:10px}}';document.head.append(style);
-const calendar=section('operation-calendar','Operation calendar.','Browse the bot’s feed of up to 12 upcoming sessions. Times are shown in your local timezone.',document.getElementById('operations'));
+const calendar=section('operation-calendar','Operation calendar.','Browse the bot's feed of up to 12 upcoming sessions. Times are shown in your local timezone.',document.getElementById('operations'));
 const tools=el('div',undefined,'resource-tools'),prev=el('button','Previous','resource-button'),next=el('button','Next','resource-button'),today=el('button','This month','resource-button'),monthName=el('strong');monthName.setAttribute('aria-live','polite');
 const gameLabel=el('label','Game'),game=el('select');for(const value of ['All games','ERLC','BRM5']){const o=el('option',value);o.value=value;game.append(o);}gameLabel.append(game);tools.append(prev,monthName,next,today,gameLabel);
-const status=el('p','Connecting to schedule…','resource-note');status.setAttribute('role','status');const grid=el('div',undefined,'cal-grid'),agenda=el('div');calendar.append(tools,status,grid,agenda);
+const status=el('p','Connecting to schedule.','resource-note');status.setAttribute('role','status');const grid=el('div',undefined,'cal-grid'),agenda=el('div');calendar.append(tools,status,grid,agenda);
 let month=new Date();month=new Date(month.getFullYear(),month.getMonth(),1);let events=null,selected=null;
 const same=(a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();
 function draw(){monthName.textContent=month.toLocaleDateString(undefined,{month:'long',year:'numeric'});grid.replaceChildren();agenda.replaceChildren();
@@ -103,24 +103,24 @@ for(let day=1;day<=new Date(month.getFullYear(),month.getMonth()+1,0).getDate();
 if(events===null){agenda.append(el('p','The calendar will populate when the live schedule is available.'));return;}
 const shown=visible.filter(r=>selected===null||new Date(r.starts_at).getDate()===selected);agenda.append(el('h3',selected===null?'Sessions this month':'Sessions on '+selected+' '+month.toLocaleDateString(undefined,{month:'long'})));
 if(!shown.length)agenda.append(el('p','No sessions in the current feed for this selection. Check Discord for the full schedule.'));
-for(const r of shown){const card=el('article',undefined,'resource-card');card.append(el('h3',r.title),el('p',new Date(r.starts_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})+' · '+r.game));const link=el('a','Open Discord for the briefing and sign-up');link.href='https://discord.gg/qmdEWAhBUy';card.append(link);agenda.append(card);}}
+for(const r of shown){const card=el('article',undefined,'resource-card');card.append(el('h3',r.title),el('p',new Date(r.starts_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})+' � '+r.game));const link=el('a','Open Discord for the briefing and sign-up');link.href='https://discord.gg/qmdEWAhBUy';card.append(link);agenda.append(card);}}
 prev.onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1);selected=null;draw();};next.onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1);selected=null;draw();};today.onclick=()=>{const n=new Date();month=new Date(n.getFullYear(),n.getMonth(),1);selected=null;draw();};game.onchange=()=>{selected=null;draw();};
 document.addEventListener('uiu-stats',event=>{const rows=event.detail.activity?.upcoming_operations;if(!Array.isArray(rows)||rows.length>12||!rows.every(r=>r&&typeof r.title==='string'&&r.title.length<=100&&['ERLC','BRM5','Both'].includes(r.game)&&Number.isFinite(Date.parse(r.starts_at)))){events=null;status.textContent='Schedule unavailable. Check Discord.';}else{events=rows;status.textContent='Updated '+new Date().toLocaleTimeString()+'. Select a day to filter.';}draw();});
 document.addEventListener('uiu-unavailable',()=>{status.textContent=events?'Connection unavailable. Sessions shown are from the last successful update.':'Schedule unavailable. Check Discord.';});draw();
-const recruitment=section('recruitment','Find your team.','Check published recruitment statuses, then contact leadership. Unconfirmed does not mean open.',document.getElementById('briefings')),recruitGrid=el('div',undefined,'resource-grid'),recruitNote=el('p','Loading statuses…','resource-note');recruitment.append(recruitGrid,recruitNote);
+const recruitment=section('recruitment','Find your team.','Check published recruitment statuses, then contact leadership. Unconfirmed does not mean open.',document.getElementById('briefings')),recruitGrid=el('div',undefined,'resource-grid'),recruitNote=el('p','Loading statuses.','resource-note');recruitment.append(recruitGrid,recruitNote);
 const gallery=section('gallery','Operation photos.','Community screenshots from operations and training.',document.getElementById('questions')),galleryTools=el('div',undefined,'resource-tools'),photoLabel=el('label','Category'),photoFilter=el('select');
-for(const value of ['All','Operations','Training']){const o=el('option',value);o.value=value;photoFilter.append(o);}photoLabel.append(photoFilter);galleryTools.append(photoLabel);const galleryGrid=el('div',undefined,'resource-grid'),photoNote=el('p','Loading photographs…','resource-note');photoNote.setAttribute('role','status');gallery.append(galleryTools,photoNote,galleryGrid);
+for(const value of ['All','Operations','Training']){const o=el('option',value);o.value=value;photoFilter.append(o);}photoLabel.append(photoFilter);galleryTools.append(photoLabel);const galleryGrid=el('div',undefined,'resource-grid'),photoNote=el('p','Loading photographs.','resource-note');photoNote.setAttribute('role','status');gallery.append(galleryTools,photoNote,galleryGrid);
 const modal=el('dialog',undefined,'photo-dialog');modal.setAttribute('aria-label','Community photograph');const close=el('button','Close photograph','resource-button'),large=el('img'),caption=el('p');close.onclick=()=>modal.close();modal.append(close,large,caption);document.body.append(modal);let photos=[];
 function drawPhotos(){galleryTools.hidden=photos.length===0;galleryGrid.replaceChildren();const shown=photos.filter(p=>photoFilter.value==='All'||p.category===photoFilter.value);photoNote.textContent=shown.length?shown.length+' photographs':photos.length?'No photos in this category.':'Photos coming soon';
-for(const p of shown){const card=el('figure',undefined,'resource-card'),button=el('button',undefined,'photo-button'),img=el('img',undefined,'gallery-image');img.src=p.url.href;img.alt=p.caption;img.loading='lazy';button.setAttribute('aria-label','Enlarge '+p.caption);button.append(img);button.onclick=()=>{large.src=p.url.href;large.alt=p.caption;caption.textContent=p.caption+(p.credit?' · '+p.credit:'');modal.showModal();};img.onerror=()=>{button.replaceChildren(el('p','Photo unavailable'));button.disabled=true;};card.append(button,el('figcaption',p.caption+(p.credit?' · '+p.credit:'')));galleryGrid.append(card);}}
+for(const p of shown){const card=el('figure',undefined,'resource-card'),button=el('button',undefined,'photo-button'),img=el('img',undefined,'gallery-image');img.src=p.url.href;img.alt=p.caption;img.loading='lazy';button.setAttribute('aria-label','Enlarge '+p.caption);button.append(img);button.onclick=()=>{large.src=p.url.href;large.alt=p.caption;caption.textContent=p.caption+(p.credit?' � '+p.credit:'');modal.showModal();};img.onerror=()=>{button.replaceChildren(el('p','Photo unavailable'));button.disabled=true;};card.append(button,el('figcaption',p.caption+(p.credit?' � '+p.credit:'')));galleryGrid.append(card);}}
 photoFilter.onchange=drawPhotos;
 async function content(){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);try{const response=await fetch('./community-content.json',{cache:'no-store',credentials:'omit',signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();if(!Array.isArray(data.recruitment)||!Array.isArray(data.gallery))throw Error();const labels={open:'Accepting members',closed:'Recruitment closed',unconfirmed:'Status unconfirmed'};
 for(const row of data.recruitment.slice(0,20)){if(!row||typeof row.department!=='string'||!Object.hasOwn(labels,row.status))continue;const card=el('article',undefined,'resource-card');card.append(el('h3',row.department),el('p',labels[row.status],'community-status'),el('p',typeof row.note==='string'?row.note:''));if(row.updated_at&&Number.isFinite(Date.parse(row.updated_at)))card.append(el('p','Confirmed '+new Date(row.updated_at).toLocaleDateString()));const a=el('a','Ask leadership in Discord');a.href='https://discord.gg/qmdEWAhBUy';card.append(a);recruitGrid.append(card);}recruitNote.textContent=recruitGrid.children.length?'Contact leadership for current requirements and availability.':'No recruitment statuses published.';
 photos=data.gallery.slice(0,60).filter(p=>p&&typeof p.src==='string'&&typeof p.caption==='string'&&['Operations','Training'].includes(p.category)).flatMap(p=>{try{const url=new URL(p.src,location.href);return url.origin===location.origin&&/\.(png|jpe?g|webp)$/i.test(url.pathname)?[{...p,url}]:[];}catch{return[];}});drawPhotos();
 }catch{recruitNote.textContent='Recruitment statuses unavailable. Ask leadership in Discord.';photoNote.textContent='Gallery unavailable. Please try again later.';}finally{clearTimeout(timer);}}content();
-document.querySelectorAll('.public-case').forEach(file=>{const parts=Array.from(file.querySelectorAll('.case-report-details'));if(!parts.length)return;const timeline=el('details'),list=el('ol',undefined,'report-timeline');timeline.append(el('summary','Case timeline — report sequence'),el('p','Events follow the published report’s order. Unknown dates are not assigned.'));
-for(const part of parts){const title=part.querySelector('summary')?.textContent?.trim();if(!title)continue;const li=el('li');li.append(el('strong',title));const text=part.querySelector('p')?.textContent?.trim();if(text)li.append(el('p',text.length>280?text.slice(0,277)+'…':text));list.append(li);}const end=el('li');end.append(el('strong','Archive status: closed'),el('p','Confirmed by management on 18 October 2026. This is a status confirmation, not the incident’s closure date.'));list.append(end);timeline.append(list);file.querySelector('.public-case-body')?.prepend(timeline);});
-const guide=section('command-guide','Find the right command.','Search by command or purpose. Case commands also allow Case Managers. Staff means Manage Server or the configured staff role. Other members’ private records require staff access.',document.getElementById('join'));
+document.querySelectorAll('.public-case').forEach(file=>{const parts=Array.from(file.querySelectorAll('.case-report-details'));if(!parts.length)return;const timeline=el('details'),list=el('ol',undefined,'report-timeline');timeline.append(el('summary','Case timeline - report sequence'),el('p','Events follow the published report's order. Unknown dates are not assigned.'));
+for(const part of parts){const title=part.querySelector('summary')?.textContent?.trim();if(!title)continue;const li=el('li');li.append(el('strong',title));const text=part.querySelector('p')?.textContent?.trim();if(text)li.append(el('p',text.length>280?text.slice(0,277)+'.':text));list.append(li);}const end=el('li');end.append(el('strong','Archive status: closed'),el('p','Confirmed by management on 18 October 2026. This is a status confirmation, not the incident's closure date.'));list.append(end);timeline.append(list);file.querySelector('.public-case-body')?.prepend(timeline);});
+const guide=section('command-guide','Find the right command.','Search by command or purpose. Case commands also allow Case Managers. Staff means Manage Server or the configured staff role. Other members' private records require staff access.',document.getElementById('join'));
 const commandDialog=el('dialog',undefined,'command-dialog');commandDialog.id='command-dialog';commandDialog.setAttribute('aria-labelledby','command-dialog-title');
 const dialogHead=el('div',undefined,'command-dialog-head'),dialogTitle=el('h2','Find a command.'),closeCommands=el('button','Close','resource-button');
 dialogTitle.id='command-dialog-title';closeCommands.type='button';closeCommands.setAttribute('aria-label','Close command finder');
@@ -139,7 +139,7 @@ const searchTools=el('div',undefined,'resource-tools'),searchLabel=el('label','S
 for(const value of ['All','Members','Staff','Case Managers / Staff','Manage Server','Manage Roles']){const o=el('option',value);o.value=value;access.append(o);}accessLabel.append(access);searchTools.append(searchLabel,accessLabel);const result=el('p',undefined,'resource-note');result.setAttribute('role','status');const list=el('div');commandDialog.append(searchTools,result,list);
 const commands=[],add=(group,permission,items)=>items.forEach(([name,description])=>commands.push({name:'/'+(group?group+' ':'')+name,description,permission}));
 add('','Members',[['profile','View your profile and activity.'],['mycases','List cases assigned to you.'],['stats','Show member and case counts.'],['help','Show bot help.']]);
-add('dossier','Members',[['view','View your dossier; staff may select another member.']]);add('dossier','Staff',[['set','Set a member’s department and callsign.']]);
+add('dossier','Members',[['view','View your dossier; staff may select another member.']]);add('dossier','Staff',[['set','Set a member's department and callsign.']]);
 for(const group of ['training','commendation']){add(group,'Members',[['list','View your active and revoked records; staff may view others.']]);add(group,'Staff',[['award','Award another member a qualification or recognition. No self-awards.'],['revoke','Revoke a record by ID with a reason.']]);}
 add('training','Members',[['sessions','Browse scheduled, completed and cancelled training.'],['join','Sign yourself up before training starts.'],['leave','Withdraw before training starts.'],['results','View your session results; staff may view another member.']]);
 add('training','Staff',[['schedule','Schedule a training session with a future date and UTC offset.'],['roster','Privately view training sign-ups and results.'],['result','Record or correct a signed-up member pass/fail after training starts. No self-assessment.'],['complete','Complete training after it starts.'],['cancel','Cancel scheduled training without recorded results.']]);
@@ -170,14 +170,14 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
   style.textContent = `header nav{flex-wrap:wrap;row-gap:12px;min-width:0}.news-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.news-card{padding:26px;border:1px solid var(--line);background:var(--panel);min-width:0}.news-card:first-child{border-top:3px solid var(--gold)}.news-card h3{font:28px Georgia,serif;overflow-wrap:anywhere}.news-card p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.news-card time{font:11px monospace;color:var(--gold)}.member-steps{list-style:none;counter-reset:steps;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.member-steps li{counter-increment:steps;padding:24px;border-top:1px solid var(--line)}.member-steps li:before{content:'0' counter(steps);font:13px monospace;color:var(--gold)}.member-steps h3{font:26px Georgia,serif}.member-steps p{font-size:14px}.guide-links{display:flex;gap:20px;flex-wrap:wrap;font-size:13px}.news-state{font-size:13px;color:var(--muted)}@media(max-width:650px){.news-grid,.member-steps{grid-template-columns:1fr}}`;
   document.head.append(style);
   const news = document.createElement('section'); news.id = 'announcements'; news.setAttribute('aria-labelledby','news-title');
-  news.innerHTML = `<div class="section-head"><div><span class="mono">UIU / COMMUNITY UPDATES</span><h2 id="news-title">Latest announcements.</h2></div><p>Updates published by community staff. Check Discord for conversations and full session briefings.</p></div><p id="news-state" class="news-state" role="status">Checking for announcements…</p><div id="news-list" class="news-grid"></div>`;
+  news.innerHTML = `<div class="section-head"><div><span class="mono">UIU / COMMUNITY UPDATES</span><h2 id="news-title">Latest announcements.</h2></div><p>Updates published by community staff. Check Discord for conversations and full session briefings.</p></div><p id="news-state" class="news-state" role="status">Checking for announcements.</p><div id="news-list" class="news-grid"></div>`;
   about.before(news);
   const guide = document.createElement('section'); guide.id = 'member-guide'; guide.setAttribute('aria-labelledby','guide-title');
-  guide.innerHTML = `<div class="section-head"><div><span class="mono">NEW TO THE UIU?</span><h2 id="guide-title">Start here.</h2></div><p>From joining the server to your first operation: start here, then follow the community’s current instructions in Discord.</p></div>
+  guide.innerHTML = `<div class="section-head"><div><span class="mono">NEW TO THE UIU?</span><h2 id="guide-title">Start here.</h2></div><p>From joining the server to your first operation: start here, then follow the community's current instructions in Discord.</p></div>
     <ol class="member-steps"><li><h3>Meet the community.</h3><p>Join our Discord, read the rules and follow any verification instructions shown there. Ask staff if you need help getting access.</p><a href="https://discord.gg/qmdEWAhBUy" class="button" target="_blank" rel="noopener noreferrer">JOIN DISCORD &rarr;</a></li>
     <li><h3>Find your department.</h3><p>Explore the teams and their duties. Contact the relevant department lead in Discord about openings and requirements; a listing does not mean recruitment is open.</p><a href="#departments">EXPLORE DEPARTMENTS &rarr;</a></li>
     <li><h3>Attend your first training.</h3><p>Use <code>/training sessions</code> in Discord to find a session, then <code>/training join</code> with its ID before it starts. Ask staff which training suits your department.</p><p>Check your results with <code>/training results</code>. Staff record qualifications separately.</p><a href="#uiu-week">SEE WHAT IS COMING UP &rarr;</a></li>
-    <li><h3>Join your first operation.</h3><p>Check the Ops Board for upcoming sessions. Read the briefing in Discord and use the bot’s Join button before the scheduled start. Staff confirm attendance afterward.</p><a href="#operations">VIEW OPS BOARD &rarr;</a></li></ol>
+    <li><h3>Join your first operation.</h3><p>Check the Ops Board for upcoming sessions. Read the briefing in Discord and use the bot's Join button before the scheduled start. Staff confirm attendance afterward.</p><a href="#operations">VIEW OPS BOARD &rarr;</a></li></ol>
     <div class="contact-note"><h3>Keep it fictional. Keep it respectful.</h3><p>Use fictional details in case reports, follow server rules, and agree roleplay boundaries with others. Questions about participation go to staff in Discord.</p><div class="guide-links"><a href="#questions">Read the FAQ</a><a href="./privacy.html">Your privacy</a><a href="./terms.html">Terms of Service</a></div></div>`;
   const questions = document.getElementById('questions');
   const weekly = document.getElementById('uiu-week');
@@ -201,7 +201,7 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
       const body=document.createElement('p');body.textContent=row.body;
       card.append(date,title,body);list.append(card);
     }
-    lastUpdate=new Date();state.textContent=rows.length ? 'Latest '+rows.length+' update'+(rows.length===1?'':'s')+' · Synced '+lastUpdate.toLocaleTimeString() : 'No announcements published yet. Check Discord for community updates.';
+    lastUpdate=new Date();state.textContent=rows.length ? 'Latest '+rows.length+' update'+(rows.length===1?'':'s')+' � Synced '+lastUpdate.toLocaleTimeString() : 'No announcements published yet. Check Discord for community updates.';
   });
   document.addEventListener('uiu-unavailable',()=>{
     state.textContent=lastUpdate ? 'Connection unavailable. Showing announcements last checked at '+lastUpdate.toLocaleTimeString()+'. They may have changed.' : 'Announcements unavailable. Check Discord for updates.';
@@ -227,11 +227,11 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
   const panel = document.createElement('div');
   panel.className = 'live-panel';
   panel.innerHTML = `<div class="live-heading"><h3>Live operations</h3><span class="connection-pill" id="bot-connection" role="status">Checking connection</span></div>
-    <dl class="activity-grid"><div><dt>UPCOMING SESSIONS</dt><dd id="activity-upcoming">—</dd></div><div><dt>COMPLETED OPERATIONS</dt><dd id="activity-completed">—</dd></div><div><dt>VERIFIED ATTENDANCES</dt><dd id="activity-attendance">—</dd></div></dl>
+    <dl class="activity-grid"><div><dt>UPCOMING SESSIONS</dt><dd id="activity-upcoming">-</dd></div><div><dt>COMPLETED OPERATIONS</dt><dd id="activity-completed">-</dd></div><div><dt>VERIFIED ATTENDANCES</dt><dd id="activity-attendance">-</dd></div></dl>
     <p class="dashboard-note">Attendance counts confirmed participations in completed operations, not unique members.</p>
     <label for="live-game" class="mono">GAME </label><select class="live-select" id="live-game"><option value="all">All games</option><option value="ERLC">ERLC</option><option value="BRM5">BRM5</option></select>
     <p id="live-state" class="dashboard-note" role="status">Waiting for the operation schedule.</p><div class="live-list" id="live-list"></div>
-    <p class="dashboard-note">Times are shown in your local timezone. Join sessions using the bot’s Join button in Discord. Showing up to 12 upcoming sessions.</p>`;
+    <p class="dashboard-note">Times are shown in your local timezone. Join sessions using the bot's Join button in Discord. Showing up to 12 upcoming sessions.</p>`;
   ops.querySelector('.section-head').after(panel);
   const badge = document.getElementById('bot-connection');
   const state = document.getElementById('live-state');
@@ -248,11 +248,11 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
       const title = document.createElement('h4'); title.textContent = row.title;
       const time = document.createElement('time'); time.dateTime = row.starts_at;
       time.textContent = new Date(row.starts_at).toLocaleString(undefined, {dateStyle:'medium',timeStyle:'short'});
-      const hint = document.createElement('p'); hint.textContent = 'Operation #' + row.id + ' · Check Discord for the briefing and sign-up.';
+      const hint = document.createElement('p'); hint.textContent = 'Operation #' + row.id + ' � Check Discord for the briefing and sign-up.';
       card.append(tag,title,time,hint); list.append(card);
     }
     state.textContent = connected
-      ? (visible.length ? visible.length + ' upcoming session' + (visible.length === 1 ? '' : 's') + ' · Updated ' + lastUpdate.toLocaleTimeString() : 'No upcoming sessions for this game.')
+      ? (visible.length ? visible.length + ' upcoming session' + (visible.length === 1 ? '' : 's') + ' � Updated ' + lastUpdate.toLocaleTimeString() : 'No upcoming sessions for this game.')
       : 'Connection unavailable. Showing the last schedule from ' + lastUpdate.toLocaleTimeString() + '.';
   }
   game.addEventListener('change', render);
@@ -266,7 +266,7 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
         !activity.upcoming_operations.every(r => r && count(r.id) && typeof r.title === 'string' && r.title.length <= 100 && ['ERLC','BRM5','Both'].includes(r.game) && Number.isFinite(Date.parse(r.starts_at)))) {
       state.textContent = 'The live schedule is not available yet. Check Discord for confirmed sessions.';
       rows = null; list.replaceChildren();
-      ['upcoming','completed','attendance'].forEach(id => document.getElementById('activity-' + id).textContent = '—');
+      ['upcoming','completed','attendance'].forEach(id => document.getElementById('activity-' + id).textContent = '-');
       return;
     }
     rows = activity.upcoming_operations; lastUpdate = new Date();
@@ -285,7 +285,7 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
   const files = archive ? Array.from(archive.querySelectorAll('.public-case')) : [];
   if (files.length) {
     const tools = document.createElement('div'); tools.className = 'archive-tools';
-    tools.innerHTML = `<label>SEARCH ARCHIVE<input id="archive-search" type="search" placeholder="Location, name or keyword…"></label><label>STATUS<select id="archive-status"><option value="all">All files</option><option value="closed">Closed</option><option value="open">Open</option></select></label><button type="button" id="archive-reset">Reset filters</button><span id="archive-result" role="status" class="dashboard-note"></span>`;
+    tools.innerHTML = `<label>SEARCH ARCHIVE<input id="archive-search" type="search" placeholder="Location, name or keyword."></label><label>STATUS<select id="archive-status"><option value="all">All files</option><option value="closed">Closed</option><option value="open">Open</option></select></label><button type="button" id="archive-reset">Reset filters</button><span id="archive-result" role="status" class="dashboard-note"></span>`;
     files[0].before(tools);
     const indexed = files.map(file => {
       const summary = file.querySelector('summary');
@@ -336,7 +336,7 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
       for (const key of ['open_cases', 'closed_cases']) fields[key].textContent = data[key].toLocaleString();
       const memberAge = Date.now() - Date.parse(data.members_updated_at);
       const membersFresh = data.members_scope === 'humans_and_uiu_bot' && data.members !== null && Number.isFinite(memberAge) && memberAge >= -120000 && memberAge < 900000;
-      fields.members.textContent = membersFresh ? data.members.toLocaleString() : '—';
+      fields.members.textContent = membersFresh ? data.members.toLocaleString() : '-';
       fields.members.setAttribute('aria-label', membersFresh ? 'Server members: people plus the UIU bot' : 'Member count unavailable');
       lastSync = new Date();
       document.dispatchEvent(new CustomEvent('uiu-stats', {detail: data}));
@@ -369,7 +369,7 @@ const jumps=el('nav',undefined,'resource-tools');jumps.setAttribute('aria-label'
 const main=document.querySelector('main'),nav=document.querySelector('header nav');
 if(!main||!nav)return;
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
-const pages={home:{label:'Home',title:'FBI / UIU — Unusual Incidents Unit'},unit:{label:'Our unit',title:'Our unit — FBI / UIU'},operations:{label:'Operations',title:'Operations — FBI / UIU'},archives:{label:'Case archives',title:'Case archives — FBI / UIU'}};
+const pages={home:{label:'Home',title:'FBI / UIU - Unusual Incidents Unit'},unit:{label:'Our unit',title:'Our unit - FBI / UIU'},operations:{label:'Operations',title:'Operations - FBI / UIU'},archives:{label:'Case archives',title:'Case archives - FBI / UIU'}};
 const groups={
  home:['uiu-week','announcements'],
  unit:['member-guide','about','leadership','departments','recruitment','community','questions','join'],
@@ -450,8 +450,10 @@ const panels={
  archives:[['case-files','Reports'],['case-managers','Case Managers'],['briefings','Briefings'],['experience','Case process']]
 };
 destinations.overview='home';
+function currentHash(){try{return decodeURIComponent(location.hash.slice(1));}catch{return '';}}
 function compactPage(page){
- let hash;try{hash=decodeURIComponent(location.hash.slice(1));}catch{hash='';}
+ let hash=currentHash();
+ if(hash==='join'&&page==='unit')hash='member-guide';
  const target=document.getElementById(hash),parent=target?.closest('main > section');
  let active=panels[page].some(([id])=>id===hash)?hash:panels[page].some(([id])=>id===parent?.id)?parent.id:panels[page][0][0];
  submenu.hidden=false;submenu.replaceChildren();
@@ -463,14 +465,14 @@ function compactPage(page){
  if(hash==='join'&&page==='unit'){document.getElementById(active).hidden=true;document.getElementById('member-guide').hidden=false;}
 }
 
-function resolvePage(){const requested=new URL(location.href).searchParams.get('page');if(Object.hasOwn(pages,requested))return requested;const hash=decodeURIComponent(location.hash.slice(1));const target=document.getElementById(hash),section=target?.closest('main > section');return destinations[hash]||destinations[section?.id]||'home';}
+function resolvePage(){const requested=new URL(location.href).searchParams.get('page');if(Object.hasOwn(pages,requested))return requested;const hash=currentHash();const target=document.getElementById(hash),section=target?.closest('main > section');return destinations[hash]||destinations[section?.id]||'home';}
 function render(navigate=false){
  const page=resolvePage();document.title=pages[page].title;document.body.classList.remove('page-home','page-unit','page-operations','page-archives');document.body.classList.add('page-'+page);
  for(const node of main.children){if(node===pageHeading)continue;node.hidden=node.dataset.uiuPage!==page;}
  pageHeading.hidden=page==='home';pageTitle.textContent=pages[page].label;pageDescription.textContent=descriptions[page]||'';
  for(const [key,a] of Object.entries(navLinks)){if(key===page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
  compactPage(page);
- const id=decodeURIComponent(location.hash.slice(1)),target=id?document.getElementById(id):null;
+ const id=currentHash(),target=id?document.getElementById(id):null;
  if(target&&!target.closest('[hidden]')){requestAnimationFrame(()=>window.scrollTo({top:0,behavior:'instant'}));}
  else if(navigate){window.scrollTo({top:0,behavior:'instant'});}
  if(navigate){const focusTarget=page==='home'?main.querySelector('.hero h1'):pageTitle;focusTarget?.setAttribute('tabindex','-1');focusTarget?.focus({preventScroll:true});}
@@ -481,3 +483,4 @@ document.addEventListener('click',event=>{
 });
 window.addEventListener('popstate',()=>render(true));window.addEventListener('hashchange',()=>render());render();
 })();
+

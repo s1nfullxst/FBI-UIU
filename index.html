@@ -159,4 +159,6 @@ document.querySelectorAll('[data-ops-filter]').forEach(button=>button.addEventLi
  document.querySelectorAll('[data-ops-games]').forEach(card=>{card.hidden=selected!=='all'&&!card.dataset.opsGames.split(' ').includes(selected);if(!card.hidden)visible++;});
  document.getElementById('ops-count').textContent=visible+' operation'+(visible===1?'':'s');updateProgress();
 }));
-document.querySelectorAll
+document.querySelectorAll('.ops-card details').forEach(d=>d.addEventListener('toggle',updateProgress));
+</script><script src="./stats.js?v=20261026-compact" defer></script>
+</body></html>
