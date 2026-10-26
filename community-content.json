@@ -2,23 +2,27 @@
   "recruitment": [
     {
       "department": "Tactical Pilots",
-      "status": "unconfirmed",
-      "note": "Ask the department lead in Discord about current openings and requirements."
+      "status": "open",
+      "note": "Recruitment is open. Contact the department lead in Discord for requirements and how to apply.",
+      "updated_at": "2026-10-26"
     },
     {
       "department": "TOD",
-      "status": "unconfirmed",
-      "note": "Ask the department lead in Discord about current openings and requirements."
+      "status": "open",
+      "note": "Recruitment is open. Contact the department lead in Discord for requirements and how to apply.",
+      "updated_at": "2026-10-26"
     },
     {
       "department": "Mobile Occult Operations Team",
-      "status": "unconfirmed",
-      "note": "Ask the department lead in Discord about current openings and requirements."
+      "status": "open",
+      "note": "Recruitment is open. Contact the department lead in Discord for requirements and how to apply.",
+      "updated_at": "2026-10-26"
     },
     {
       "department": "Financial",
-      "status": "unconfirmed",
-      "note": "Ask the department lead in Discord about current openings and requirements."
+      "status": "open",
+      "note": "Recruitment is open. Contact the department lead in Discord for requirements and how to apply.",
+      "updated_at": "2026-10-26"
     }
   ],
   "gallery": []
