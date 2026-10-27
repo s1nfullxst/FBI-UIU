@@ -17,6 +17,18 @@
       "status": "open",
       "note": "Recruitment is open. Contact the department lead in Discord for requirements and how to apply.",
       "updated_at": "2026-10-26"
+    },
+    {
+      "department": "Financial",
+      "status": "open",
+      "note": "Recruitment is open. Ask staff in Discord for requirements and how to apply.",
+      "updated_at": "2026-10-27"
+    },
+    {
+      "department": "Internal Affairs",
+      "status": "open",
+      "note": "Recruitment is open. Ask staff in Discord for requirements and how to apply.",
+      "updated_at": "2026-10-27"
     }
   ],
   "gallery": []
