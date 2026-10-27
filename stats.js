@@ -554,7 +554,7 @@ const resourcesStyle=el('style');resourcesStyle.textContent="\n.resource-switch{
 const resourceSection=deskSection('resources','Unit resources.','Leadership contacts and Finance / Internal Affairs report drafts in one place.','unit'),resourceSwitch=el('nav'),resourceBody=el('div');
 resourceSwitch.className='resource-switch';resourceSwitch.setAttribute('aria-label','Unit resources');resourceSection.append(resourceSwitch,resourceBody);
 const resourceViews={},resourceLinks={};
-for(const [id,label] of [['chain-of-command','Chain of command'],['finance-form','Finance form'],['ia-form','IA form']]){const a=routeLink(label,'unit',id);resourceSwitch.append(a);resourceLinks[id]=a;const view=el('div',undefined,'resource-view');view.id=id;view.hidden=true;resourceBody.append(view);resourceViews[id]=view;}
+for(const [id,label] of [['chain-of-command','Chain of command'],['finance-form','Finance form'],['ia-form','IA form'],['tod-outfits','TOD outfits']]){const a=routeLink(label,'unit',id);resourceSwitch.append(a);resourceLinks[id]=a;const view=el('div',undefined,'resource-view');view.id=id;view.hidden=true;resourceBody.append(view);resourceViews[id]=view;}
 function selectResourcePanel(hash){const chosen=Object.hasOwn(resourceViews,hash)?hash:'chain-of-command';for(const [id,node] of Object.entries(resourceViews)){node.hidden=id!==chosen;resourceLinks[id].toggleAttribute('aria-current',id===chosen);if(id===chosen)resourceLinks[id].setAttribute('aria-current','page');}}
 function resourceHeading(view,title,description){view.append(el('h3',title),el('p',description,'resource-intro'));}
 const chainView=resourceViews['chain-of-command'];resourceHeading(chainView,'Chain of command','Find the right leadership contact. Start with your department lead for routine matters and follow the server rules for reporting and escalation. UIU and FBI leadership are shown separately.');
@@ -609,6 +609,13 @@ const iaForm=reportForm(iaView,'IA',['Personnel conduct','Evidence handling','In
 searchEntries.push(['Chain of command','COC / UIU and FBI leadership contacts','unit','chain-of-command'],['Finance form','Funding requests, suspicious transactions and seized assets','unit','finance-form'],['Internal Affairs form','IA reports for review through Discord','unit','ia-form']);
 contacts.append(el('br'),routeLink('Chain of command','unit','chain-of-command'));selectResourcePanel(currentHash());
 
+
+
+// Only the private bot server ever receives or serves outfit images.
+const todView=resourceViews['tod-outfits'];resourceHeading(todView,'TOD outfits','Sign in with Discord to open the private TOD outfit gallery. Access is restricted to members with the TOD role.');
+const todStatus=el('p','Checking Discord sign-in availability.','resource-note'),todOpen=el('a','Open TOD outfits','resource-button');todStatus.setAttribute('role','status');todOpen.hidden=true;todOpen.href='https://fbi-uiu.wisp.uno/tod';todView.append(todStatus,todOpen);
+(async()=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);try{const response=await fetch('https://fbi-uiu.wisp.uno/tod/status',{credentials:'omit',cache:'no-store',signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();if(data.configured!==true)throw Error();todStatus.textContent='Discord sign-in is available. Your TOD role is checked on the secure gallery.';todOpen.hidden=false;}catch{todStatus.textContent='Discord sign-in is being set up. TOD outfits will become available here once setup is complete.';}finally{clearTimeout(timer);}})();
+searchEntries.push(['TOD outfits','Discord sign-in / restricted TOD outfit gallery','unit','tod-outfits']);
 
 const submenu=el('nav',undefined,'subpage-menu');submenu.setAttribute('aria-label','Page sections');pageHeading.after(submenu);
 const panels={

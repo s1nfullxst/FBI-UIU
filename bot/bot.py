@@ -16,6 +16,7 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 from aiohttp import web
+from tod_portal import TODPortal
 
 LOG = logging.getLogger("uiu")
 GOLD = 0xC6AC72
@@ -565,6 +566,8 @@ class UIUBot(discord.Client):
         app = web.Application(client_max_size=1024)
         app.router.add_get("/stats", self.stats_route)
         app.router.add_get("/health", self.health_route)
+        self.tod_portal = TODPortal(self)
+        self.tod_portal.install(app)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         await web.TCPSite(self.runner, "0.0.0.0", port).start()

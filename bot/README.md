@@ -167,3 +167,34 @@ Staff means Manage Server or STAFF_ROLE_ID; Case Manager alone does not grant tr
 Replace only bot.py and restart to sync commands. Existing data is preserved; new tables are created automatically and included in /backup. Privacy erasure covers training sign-ups, results, assessors and session authors. Keep data/uiu.sqlite3 and Environment settings.
 
 The website's This week in UIU panel shows upcoming operations and training over the next seven days, plus recent announcements. Replace bot.py and restart to enable the training feed. The panel shows unavailable rather than an empty schedule when connected to an older bot version.
+
+## Private TOD outfits and Discord sign-in (27 October 2026)
+
+This update adds a second Python module. Upload BOTH `bot.py` and `tod_portal.py` to the deployment root beside `requirements.txt`; retain existing data and environment settings. Dependencies are unchanged. The public website shows a setup message until `/tod/status` reports configured.
+
+Before enabling:
+1. In the existing Discord application's OAuth2 settings, register this exact redirect: `https://fbi-uiu.wisp.uno/tod/callback`.
+2. In Wispbyte Environment, enter `DISCORD_CLIENT_SECRET` privately. This is the application's OAuth2 client secret, not its bot token. Never paste it into chat, source, GitHub, or the public website.
+3. `DISCORD_CLIENT_ID` is optional when the bot discovers its application ID; otherwise set it to the public Application ID. `GUILD_ID` and `DISCORD_TOKEN` remain as already configured.
+4. `TOD_PUBLIC_ORIGIN` defaults to `https://fbi-uiu.wisp.uno`. If the host address changes, update this setting, the registered redirect and the website link together.
+5. Restart the updated bot. Open `/tod/status`, then verify Discord login with a TOD account and denial with a non-TOD account before announcing availability.
+
+Only role `1532377848134762536` grants access. Administrator, staff, other departments and the server owner receive no automatic bypass. Discord identity is obtained with the `identify` OAuth2 scope. The bot fetches current membership from its configured server before each protected page and asset. A role removal blocks later requests; it cannot recall images already viewed/downloaded. During Discord outages, access fails closed.
+
+### Private outfit files
+
+Upload images ONLY through the private hosting Files panel into `data/tod-outfits/` (or `TOD_OUTFITS_DIR`). Never add them to the public GitHub repository, GitHub Pages, a public Discord CDN URL, or the website HTML. `data/` is git-ignored. PNG, JPG, JPEG and WebP are supported; use filenames such as `tod-field.png`. Add a private `manifest.json` beside them:
+
+```json
+[
+  {"title":"TOD field outfit","file":"tod-field.png","caption":"Approved reference supplied by leadership."}
+]
+```
+
+The example is a schema, not an approved outfit. With no manifest, authenticated TOD members see an empty gallery. Only manifest-listed files are served. Paths outside the private directory, external image URLs and unlisted files are rejected. Keep this directory out of any reverse-proxy/static file mapping. Proxy access logs should redact the `/tod/callback` query string, which briefly carries an authorization code.
+
+### Sessions and operation
+
+Secure HttpOnly SameSite=Lax cookies are scoped to the bot host; the gallery opens as a separate top-level page, avoiding third-party cookie requirements on GitHub Pages. Sessions expire after one hour and live only in memory. Restarting the bot signs everyone out. Do not run multiple portal processes without a shared session/state store. OAuth tokens are not persisted; access-token revocation is attempted after identity lookup. Outfit responses use private/no-store cache headers. Staff should use the existing support route for access issues.
+
+Tests: `python -m unittest discover -p 'test*.py'` from this folder. Test fixtures use fake Discord identities and memberships, not production credentials.
