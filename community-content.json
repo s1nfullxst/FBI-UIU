@@ -23,6 +23,11 @@
       "status": "open",
       "note": "Recruitment is open. Contact the department lead in Discord for requirements and how to apply.",
       "updated_at": "2026-10-26"
+    },
+    {
+      "department": "Internal Affairs",
+      "status": "unconfirmed",
+      "note": "Contact Shaxx / GOI-25 in Discord about availability and requirements."
     }
   ],
   "gallery": []
