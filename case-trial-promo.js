@@ -17,10 +17,10 @@
     const title = document.createElement('h3');
     title.textContent = 'Could you solve The Second Tide?';
     const description = document.createElement('p');
-    description.textContent = 'Inspect six fictional evidence files, connect the clues and solve a maritime anomaly. Get a feel for UIU casework before deciding whether to join.';
+    description.textContent = 'Inspect eight fictional evidence files, challenge a witness account and reconstruct the timeline of a maritime anomaly. Get a feel for UIU casework before deciding whether to join.';
     const note = document.createElement('p');
     note.className = 'trial-fineprint';
-    note.textContent = 'About 5–10 minutes · Hints available · Practice case, not an application';
+    note.textContent = 'About 10–15 minutes · Hints available · Practice case, not an application';
     const link = document.createElement('a');
     link.href = './case-trial.html';
     link.className = 'button';
